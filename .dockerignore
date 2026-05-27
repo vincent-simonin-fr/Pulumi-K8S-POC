@@ -1,0 +1,27 @@
+# ── Build artifacts ────────────────────────────────────────────────────────────
+**/bin/
+**/obj/
+
+# ── Git ────────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Tests (non nécessaires dans l'image de prod) ───────────────────────────────
+tests/
+
+# ── Infra / IaC ────────────────────────────────────────────────────────────────
+infra/
+openspec/
+.claude/
+
+# ── IDE & outils locaux ────────────────────────────────────────────────────────
+.vscode/
+.vs/
+*.user
+*.suo
+
+# ── Docs & config racine ───────────────────────────────────────────────────────
+README.md
+docker-compose*.yml
+Ecommerce.slnx
+.editorconfig

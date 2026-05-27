@@ -42,7 +42,8 @@ public class MessagingResources : ComponentResource
                         Containers = new ContainerArgs
                         {
                             Name = "rabbitmq",
-                            Image = "rabbitmq:3.13-management-alpine",
+                            Image = "rabbitmq:4.3.1-management-alpine",
+                            ImagePullPolicy = "IfNotPresent",
                             Ports = new List<ContainerPortArgs>
                             {
                                 new() { ContainerPortValue = 5672, Name = "amqp" },
@@ -50,8 +51,10 @@ public class MessagingResources : ComponentResource
                             },
                             Env = new List<EnvVarArgs>
                             {
-                                new() { Name = "RABBITMQ_DEFAULT_USER", Value = "guest" },
-                                new() { Name = "RABBITMQ_DEFAULT_PASS", Value = "guest" }
+                                new() { Name = "RABBITMQ_DEFAULT_USER",   Value = "guest" },
+                                new() { Name = "RABBITMQ_DEFAULT_PASS",   Value = "guest" },
+                                new() { Name = "RABBITMQ_ERLANG_COOKIE",  Value = "ecommerce-secret-cookie" },
+                                new() { Name = "ERL_FLAGS",               Value = "-setcookie ecommerce-secret-cookie" }
                             },
                             ReadinessProbe = new ProbeArgs
                             {
@@ -59,8 +62,9 @@ public class MessagingResources : ComponentResource
                                 {
                                     Command = new[] { "rabbitmq-diagnostics", "-q", "ping" }
                                 },
-                                InitialDelaySeconds = 15,
-                                PeriodSeconds = 10
+                                InitialDelaySeconds = 30,
+                                PeriodSeconds = 10,
+                                FailureThreshold = 6
                             }
                         }
                     }

@@ -100,16 +100,24 @@ kubectl config use-context kind-ecommerce
 
 ### 2. Construire et charger les images
 
+> **Important (Podman) :** Podman préfixe automatiquement les images locales avec `localhost/`. Utilisez ce préfixe partout.
+
 ```bash
 # Depuis la racine du projet
-podman build -t ecommerce/order-api:dev     -f docker/order-api/Dockerfile .
-podman build -t ecommerce/inventory-api:dev -f docker/inventory-api/Dockerfile .
-podman build -t ecommerce/gateway:dev       -f docker/gateway/Dockerfile .
+podman build -t localhost/ecommerce/order-api:dev     -f docker/order-api/Dockerfile .
+podman build -t localhost/ecommerce/inventory-api:dev -f docker/inventory-api/Dockerfile .
+podman build -t localhost/ecommerce/gateway:dev       -f docker/gateway/Dockerfile .
 
-# Charger dans Kind (Kind utilise sa propre registry interne)
-kind load docker-image ecommerce/order-api:dev     --name ecommerce
-kind load docker-image ecommerce/inventory-api:dev --name ecommerce
-kind load docker-image ecommerce/gateway:dev       --name ecommerce
+# Pré-charger les images publiques dans Kind (évite les timeouts)
+podman pull postgres:16-alpine
+podman pull rabbitmq:4.3.1-management-alpine
+kind load docker-image postgres:16-alpine              --name ecommerce
+kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
+
+# Charger les images applicatives dans Kind
+kind load docker-image localhost/ecommerce/order-api:dev     --name ecommerce
+kind load docker-image localhost/ecommerce/inventory-api:dev --name ecommerce
+kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
 ```
 
 ### 3. Déployer avec Pulumi
@@ -122,7 +130,7 @@ pulumi login --local
 pulumi stack init dev
 
 # Déployer
-pulumi up --stack dev
+pulumi up --yes
 
 # Vérifier les outputs
 pulumi stack output
@@ -255,8 +263,7 @@ dotnet ef migrations add InitialCreate \
   --startup-project src/Services/Inventory/Inventory.Api
 ```
 
-En développement, les migrations sont appliquées automatiquement au démarrage.
-Sur Kubernetes, un **Job init container** les applique avant le démarrage du pod.
+Les migrations sont appliquées automatiquement au démarrage de l'application dans **tous les environnements** (développement et Kubernetes) via `MigrateAsync()`. Aucun Job externe n'est nécessaire.
 
 ---
 
@@ -282,8 +289,110 @@ Pour activer Jaeger ou une stack OTLP, configurer `OpenTelemetry:Endpoint` dans 
 
 ---
 
+## Repartir de zéro (reset complet)
+
+Procédure complète pour supprimer l'état Pulumi, détruire le cluster Kind et recommencer proprement.
+
+### Étape 1 — Supprimer l'état Pulumi
+
+```bash
+cd infra/Ecommerce.Infra
+
+# Si pulumi up tourne encore : Ctrl+C pour l'arrêter, puis annuler le verrou :
+pulumi cancel
+
+# Supprimer le stack et tout son état (--force ignore les ressources encore référencées)
+pulumi stack rm dev --force
+```
+
+### Étape 2 — Supprimer le cluster Kind
+
+```bash
+kind delete cluster --name ecommerce
+```
+
+### Étape 3 — Recréer le cluster Kind
+
+```bash
+# Sur Windows avec Podman (requis)
+set KIND_EXPERIMENTAL_PROVIDER=podman
+
+# Créer le cluster (le fichier kind-config.yaml doit être présent à la racine)
+kind create cluster --name ecommerce --config kind-config.yaml
+kubectl config use-context kind-ecommerce
+```
+
+> **Rappel — contenu de `kind-config.yaml` :**
+>
+> ```yaml
+> kind: Cluster
+> apiVersion: kind.x-k8s.io/v1alpha4
+> nodes:
+>     - role: control-plane
+>       extraPortMappings:
+>           - containerPort: 30080
+>             hostPort: 30080
+>             protocol: TCP
+> ```
+
+### Étape 4 — Reconstruire et charger les images
+
+```bash
+# Depuis la racine du projet
+podman build -t ecommerce/order-api:dev     -f docker/order-api/Dockerfile .
+podman build -t ecommerce/inventory-api:dev -f docker/inventory-api/Dockerfile .
+podman build -t ecommerce/gateway:dev       -f docker/gateway/Dockerfile .
+
+# Images publiques (évite les timeouts lors du pulumi up)
+podman pull postgres:16-alpine
+podman pull rabbitmq:4.3.1-management-alpine
+kind load docker-image postgres:16-alpine               --name ecommerce
+kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
+
+# Images applicatives
+kind load docker-image ecommerce/order-api:dev     --name ecommerce
+kind load docker-image ecommerce/inventory-api:dev --name ecommerce
+kind load docker-image ecommerce/gateway:dev       --name ecommerce
+```
+
+### Étape 5 — Réinitialiser et redéployer avec Pulumi
+
+```bash
+cd infra/Ecommerce.Infra
+
+pulumi login --local
+pulumi stack init dev
+pulumi up --yes
+```
+
+### Étape 6 — Vérifier le déploiement
+
+```bash
+# État des pods
+kubectl get pods -n ecommerce
+
+# Logs d'un pod spécifique
+kubectl logs -n ecommerce deployment/order-api
+kubectl logs -n ecommerce deployment/inventory-api
+
+# Tester la gateway
+curl http://localhost:30080/inventory
+```
+
+---
+
 ## Supprimer le cluster
 
 ```bash
 kind delete cluster --name ecommerce
+```
+
+## Arreter et redémarer le control plane (Podman Desktop)
+
+```bash
+# Arrêter (tout est conservé — images, pods, état Pulumi) :
+podman stop ecommerce-control-plane
+
+# Relancer :
+podman start ecommerce-control-plane
 ```

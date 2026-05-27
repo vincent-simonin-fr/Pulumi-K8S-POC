@@ -31,5 +31,3 @@ appsettings.*.json
 logs/
 *.log
 
-## Docker
-.dockerignore

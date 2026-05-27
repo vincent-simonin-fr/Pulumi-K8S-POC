@@ -1,3 +1,5 @@
+encryptionsalt: v1:xj4hoKmTd2c=:v1:FgcGyMtAeIhtCKbK:CQO6o0UvlevmAveQNq3ETt31hTip5A==
+
 config:
   # Images Docker — à construire localement et charger dans Kind avec :
   # podman build -t ecommerce/order-api:dev -f docker/order-api/Dockerfile .

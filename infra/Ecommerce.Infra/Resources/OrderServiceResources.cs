@@ -1,8 +1,6 @@
 using Pulumi;
-using Pulumi.Kubernetes.Batch.V1;
 using Pulumi.Kubernetes.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Apps.V1;
-using Pulumi.Kubernetes.Types.Inputs.Batch.V1;
 using Pulumi.Kubernetes.Types.Inputs.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Meta.V1;
 using Deployment = Pulumi.Kubernetes.Apps.V1.Deployment;
@@ -12,7 +10,7 @@ namespace Ecommerce.Infra.Resources;
 public class ServiceResourcesArgs
 {
     public Input<string> Namespace { get; set; } = "ecommerce";
-    public Input<string> Image { get; set; } = "ecommerce/order-api:dev";
+    public Input<string> Image { get; set; } = "localhost/ecommerce/order-api:dev";
     public Input<string> OrderDbHost { get; set; } = "order-db";
     public Input<string> RabbitMqHost { get; set; } = "rabbitmq";
 }
@@ -39,39 +37,6 @@ public class OrderServiceResources : ComponentResource
             }
         }, resourceOpts);
 
-        // ── Init container Job pour EF Core migrations ────────────────────────
-        var migrationJob = new Job("order-api-migration", new JobArgs
-        {
-            Metadata = new ObjectMetaArgs
-            {
-                Namespace = args.Namespace,
-                Name = "order-api-migration",
-                Annotations = new InputMap<string>
-                {
-                    // Force la recréation du Job à chaque pulumi up si l'image change
-                    ["pulumi.com/replaceOnChanges"] = "spec.template.spec.containers[0].image"
-                }
-            },
-            Spec = new JobSpecArgs
-            {
-                BackoffLimit = 3,
-                Template = new PodTemplateSpecArgs
-                {
-                    Spec = new PodSpecArgs
-                    {
-                        RestartPolicy = "OnFailure",
-                        Containers = new ContainerArgs
-                        {
-                            Name = "migration",
-                            Image = args.Image,
-                            Command = new[] { "dotnet", "ef", "database", "update" },
-                            Env = BuildEnvVars(args)
-                        }
-                    }
-                }
-            }
-        }, resourceOpts);
-
         // ── Deployment ────────────────────────────────────────────────────────
         var deployment = new Deployment("order-api-deploy", new DeploymentArgs
         {
@@ -95,25 +60,27 @@ public class OrderServiceResources : ComponentResource
                         {
                             Name = "order-api",
                             Image = args.Image,
+                            ImagePullPolicy = "IfNotPresent",
                             Ports = new ContainerPortArgs { ContainerPortValue = 8080 },
                             Env = BuildEnvVars(args),
                             ReadinessProbe = new ProbeArgs
                             {
-                                HttpGet = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
-                                InitialDelaySeconds = 10,
-                                PeriodSeconds = 5
+                                HttpGet = new HTTPGetActionArgs { Path = "/health/ready", Port = 8080 },
+                                InitialDelaySeconds = 30,
+                                PeriodSeconds = 10,
+                                FailureThreshold = 12
                             },
                             LivenessProbe = new ProbeArgs
                             {
                                 HttpGet = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
-                                InitialDelaySeconds = 20,
-                                PeriodSeconds = 10
+                                InitialDelaySeconds = 60,
+                                PeriodSeconds = 15
                             }
                         }
                     }
                 }
             }
-        }, new CustomResourceOptions { Parent = this, DependsOn = migrationJob });
+        }, resourceOpts);
 
         var service = new Service("order-api-svc", new ServiceArgs
         {

@@ -56,7 +56,6 @@ services:
   rabbitmq:
     image: rabbitmq:4.3.1-management-alpine
     container_name: rabbitmq
-    user: 0:0
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest

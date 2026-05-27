@@ -104,10 +104,9 @@ try
         app.MapScalarApiReference(options => options.WithTitle("Order API"));
     }
 
-    // ── Migrations auto au démarrage (dev only) ────────────────────────────────
-    if (app.Environment.IsDevelopment())
+    // ── Migrations au démarrage (tous environnements) ─────────────────────────
+    using (var scope = app.Services.CreateScope())
     {
-        using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         await db.Database.MigrateAsync();
     }

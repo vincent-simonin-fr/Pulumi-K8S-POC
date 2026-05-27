@@ -35,7 +35,7 @@ public class EcommerceStack : Stack
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
         {
             Namespace     = namespaceName,
-            Image         = config.Get("orderApi:image") ?? "ecommerce/order-api:dev",
+            Image         = config.Get("orderApi:image") ?? "localhost/ecommerce/order-api:dev",
             OrderDbHost   = dbResources.OrderDbServiceName,
             RabbitMqHost  = mqResources.RabbitMqServiceName
         });
@@ -43,7 +43,7 @@ public class EcommerceStack : Stack
         var inventoryApi = new InventoryServiceResources("inventory-service", new InventoryServiceResourcesArgs
         {
             Namespace            = namespaceName,
-            Image                = config.Get("inventoryApi:image") ?? "ecommerce/inventory-api:dev",
+            Image                = config.Get("inventoryApi:image") ?? "localhost/ecommerce/inventory-api:dev",
             InventoryDbHost      = dbResources.InventoryDbServiceName,
             RabbitMqHost         = mqResources.RabbitMqServiceName,
             ReservationTtlMinutes = config.GetInt32("reservation:ttlMinutes") ?? 10,
@@ -53,7 +53,7 @@ public class EcommerceStack : Stack
         var gateway = new GatewayResources("gateway", new GatewayResourcesArgs
         {
             Namespace      = namespaceName,
-            Image          = config.Get("gateway:image") ?? "ecommerce/gateway:dev",
+            Image          = config.Get("gateway:image") ?? "localhost/ecommerce/gateway:dev",
             NodePort       = config.GetInt32("gateway:nodePort") ?? 30080,
             OrderApiHost   = orderApi.ServiceName,
             InventoryApiHost = inventoryApi.ServiceName

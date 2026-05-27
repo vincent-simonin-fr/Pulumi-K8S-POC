@@ -58,6 +58,7 @@ public class GatewayResources : ComponentResource
                         {
                             Name = "gateway",
                             Image = args.Image,
+                            ImagePullPolicy = "IfNotPresent",
                             Ports = new ContainerPortArgs { ContainerPortValue = 8080 },
                             EnvFrom = new EnvFromSourceArgs
                             {
