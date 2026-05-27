@@ -1,0 +1,140 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ecommerce – stack de développement local (Podman Compose)
+# Usage : podman-compose up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  ecommerce-net:
+    driver: bridge
+
+volumes:
+  order-db-data:
+  inventory-db-data:
+  rabbitmq-data:
+
+services:
+
+  # ── Bases de données ────────────────────────────────────────────────────────
+  order-db:
+    image: postgres:16-alpine
+    container_name: order-db
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ecommerce-net
+
+  inventory-db:
+    image: postgres:16-alpine
+    container_name: inventory-db
+    environment:
+      POSTGRES_DB: inventory_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - inventory-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ecommerce-net
+
+  # ── Messaging ───────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # Management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ecommerce-net
+
+  # ── Services applicatifs ────────────────────────────────────────────────────
+  order-api:
+    build:
+      context: .
+      dockerfile: docker/order-api/Dockerfile
+    container_name: order-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__OrderDb: "Host=order-db;Port=5432;Database=order_db;Username=postgres;Password=postgres"
+      RabbitMQ__Host: rabbitmq
+      RabbitMQ__VirtualHost: /
+      RabbitMQ__Username: guest
+      RabbitMQ__Password: guest
+      OpenTelemetry__Endpoint: http://otel-collector:4317
+    ports:
+      - "5001:8080"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+
+  inventory-api:
+    build:
+      context: .
+      dockerfile: docker/inventory-api/Dockerfile
+    container_name: inventory-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__InventoryDb: "Host=inventory-db;Port=5432;Database=inventory_db;Username=postgres;Password=postgres"
+      RabbitMQ__Host: rabbitmq
+      RabbitMQ__VirtualHost: /
+      RabbitMQ__Username: guest
+      RabbitMQ__Password: guest
+      Reservation__TtlMinutes: "10"
+      Reservation__CheckIntervalSeconds: "30"
+      OpenTelemetry__Endpoint: http://otel-collector:4317
+    ports:
+      - "5002:8080"
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway/Dockerfile
+    container_name: gateway
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    ports:
+      - "8080:8080"
+    depends_on:
+      - order-api
+      - inventory-api
+    networks:
+      - ecommerce-net

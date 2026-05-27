@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageReference Include="xunit" Version="2.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.*">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="FluentAssertions" Version="6.*" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.*" />
+    <PackageReference Include="Testcontainers.RabbitMq" Version="4.*" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.*" />
+    <PackageReference Include="Respawn" Version="6.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Services\Inventory\Inventory.Api\Inventory.Api.csproj" />
+  </ItemGroup>
+
+  <!-- Sécurité : overrides de dépendances transitives vulnérables.
+       GHSA-5mfx-4wcx-rv27 / GHSA-m5vv-6r4h-3vj9 / GHSA-wvxc-855f-jvrv : Azure.Identity < 1.11.0
+       GHSA-59j7-ghrg-fj52                                                : IdentityModel < 7.1.2
+       GHSA-rxg9-xrhp-64gj                                                : System.Drawing.Common < 6.0.0 -->
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="[1.11.4,)" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="[4.61.3,)" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="[7.1.2,)" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="[7.1.2,)" />
+    <PackageReference Include="System.Drawing.Common" Version="[6.0.0,)" />
+  </ItemGroup>
+
+</Project>

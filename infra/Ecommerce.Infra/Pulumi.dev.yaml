@@ -1,0 +1,14 @@
+config:
+  # Images Docker — à construire localement et charger dans Kind avec :
+  # podman build -t ecommerce/order-api:dev -f docker/order-api/Dockerfile .
+  # kind load docker-image ecommerce/order-api:dev
+  orderApi:image: ecommerce/order-api:dev
+  inventoryApi:image: ecommerce/inventory-api:dev
+  gateway:image: ecommerce/gateway:dev
+
+  # Ports NodePort exposés sur Kind
+  gateway:nodePort: "30080"
+
+  # Réservation
+  reservation:ttlMinutes: "10"
+  reservation:checkIntervalSeconds: "30"

@@ -1,0 +1,35 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+*.userprefs
+*.swp
+*.DS_Store
+TestResults/
+
+## NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+## Pulumi
+*.Pulumi.yaml
+.pulumi/
+
+## Secrets / env
+*.env
+.env.*
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+## Logs
+logs/
+*.log
+
+## Docker
+.dockerignore

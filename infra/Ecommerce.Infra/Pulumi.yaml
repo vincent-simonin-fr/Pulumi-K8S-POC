@@ -1,0 +1,7 @@
+name: ecommerce-infra
+runtime: dotnet
+description: Ecommerce Kubernetes infrastructure deployed on Kind via Podman Desktop
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: "ecommerce"

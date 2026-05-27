@@ -1,0 +1,44 @@
+<Solution>
+
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="NuGet.config" />
+    <File Path="global.json" />
+    <File Path="docker-compose.yml" />
+    <File Path="README.md" />
+  </Folder>
+
+  <Folder Name="/src/" />
+
+  <Folder Name="/src/Services/" />
+  <Folder Name="/src/Services/Order/">
+    <Project Path="src/Services/Order/Order.Domain/Order.Domain.csproj" />
+    <Project Path="src/Services/Order/Order.Application/Order.Application.csproj" />
+    <Project Path="src/Services/Order/Order.Infrastructure/Order.Infrastructure.csproj" />
+    <Project Path="src/Services/Order/Order.Api/Order.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/Services/Inventory/">
+    <Project Path="src/Services/Inventory/Inventory.Domain/Inventory.Domain.csproj" />
+    <Project Path="src/Services/Inventory/Inventory.Application/Inventory.Application.csproj" />
+    <Project Path="src/Services/Inventory/Inventory.Infrastructure/Inventory.Infrastructure.csproj" />
+    <Project Path="src/Services/Inventory/Inventory.Api/Inventory.Api.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Shared/">
+    <Project Path="src/Shared/Ecommerce.Contracts/Ecommerce.Contracts.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Gateway/">
+    <Project Path="src/Gateway/Ecommerce.Gateway/Ecommerce.Gateway.csproj" />
+  </Folder>
+
+  <Folder Name="/tests/">
+    <Project Path="tests/Order.Application.IntegrationTests/Order.Application.IntegrationTests.csproj" />
+    <Project Path="tests/Inventory.Application.IntegrationTests/Inventory.Application.IntegrationTests.csproj" />
+  </Folder>
+
+  <Folder Name="/infra/">
+    <Project Path="infra/Ecommerce.Infra/Ecommerce.Infra.csproj" />
+  </Folder>
+
+</Solution>

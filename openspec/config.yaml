@@ -1,0 +1,62 @@
+schema: spec-driven
+
+context: |
+  ## Projet : Ecommerce
+
+  Stack technique :
+  - .NET 10 — Minimal API (pas de controllers)
+  - Clean Architecture (Jason Taylor pattern) : Domain → Application → Infrastructure → Api
+  - MediatR 12 (CQRS) + FluentValidation 11 + pipeline behaviors
+  - MassTransit 8 + RabbitMQ (event-driven, consumers dans Application layer)
+  - Entity Framework Core 10 + PostgreSQL (Npgsql)
+  - YARP (reverse proxy / gateway)
+  - Pulumi C# (infra-as-code, Kind + Podman Desktop)
+  - Serilog (logs JSON structurés) + OpenTelemetry (traces + métriques, OTLP)
+  - Health checks ASP.NET Core (/health, /health/ready)
+  - Testcontainers + xUnit + Respawn (tests d'intégration)
+  - Scalar (documentation OpenAPI interactive)
+
+  Services :
+  - **OrderApi** (`src/Services/Order/`) — gestion des paniers
+  - **InventoryApi** (`src/Services/Inventory/`) — gestion du stock et réservations
+  - **Ecommerce.Gateway** (`src/Gateway/`) — YARP reverse proxy
+  - **Ecommerce.Contracts** (`src/Shared/`) — events MassTransit partagés
+
+  Conventions de code :
+  - Namespaces alignés sur les dossiers
+  - Entités : constructeur privé + factory method `Create()`
+  - Records pour les Commands, Queries, DTOs et Events
+  - snake_case pour les colonnes EF (`HasColumnName`)
+  - DependencyInjection.cs dans chaque couche Infrastructure (extension method)
+  - Program.cs expose `public partial class Program` pour les tests
+  - Variables d'env en surcharge des appsettings : `Section__Key` (double underscore)
+  - Durées et intervalles configurables via `appsettings.json` (section `Reservation`)
+
+  Commits : Conventional Commits (feat:, fix:, refactor:, test:, chore:)
+
+  Domaine métier :
+  - Un client peut ajouter des produits à un panier (OrderApi)
+  - Chaque ajout génère un événement vers InventoryApi pour réserver le stock
+  - La réservation expire après N minutes (configurable, défaut 10 min)
+  - À l'expiration, InventoryApi publie un événement, OrderApi retire le produit du panier
+  - Le stock disponible = StockQuantity - ReservedQuantity
+
+rules:
+  proposal:
+    - Toujours inclure une section "Non-goals" pour clarifier le périmètre
+    - Référencer les services impactés (OrderApi / InventoryApi / Gateway / Contracts)
+    - Préciser si un nouveau contrat MassTransit est nécessaire
+  design:
+    - Suivre la Clean Architecture : Domain → Application → Infrastructure → Api
+    - Toujours préciser dans quelle couche chaque composant réside
+    - Mentionner les migrations EF Core si le modèle de données change
+    - Décrire le flux d'événements si MassTransit est impliqué
+  tasks:
+    - Découper en tâches de moins de 2h chacune
+    - Ordonner Domain → Application → Infrastructure → Api → Tests
+    - Inclure systématiquement une tâche "Ajouter tests d'intégration"
+    - Inclure une tâche "Mettre à jour Pulumi si nouveau service ou port"
+  spec:
+    - Écrire en français
+    - Inclure les règles métier explicitement (pas seulement le comportement technique)
+    - Préciser les valeurs configurables et leur section dans appsettings.json

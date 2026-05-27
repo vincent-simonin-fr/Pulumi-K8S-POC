@@ -1,0 +1,44 @@
+<Project>
+
+  <!-- ── Propriétés communes à tous les projets ──────────────────────────── -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>preview</LangVersion>
+
+    <!-- Métadonnées du projet -->
+    <Authors>Ecommerce Team</Authors>
+    <Company>Ecommerce</Company>
+    <Copyright>Copyright © $([System.DateTime]::Now.Year) Ecommerce</Copyright>
+    <Product>Ecommerce Platform</Product>
+
+    <!-- Qualité du code -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+    <!-- Déterminisme des builds (utile en CI) -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- ── Projets non publiables (tout sauf les libs partagées) ───────────── -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- ── Suppressions spécifiques aux projets de test ───────────────────── -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <!-- xUnit génère des warnings sur les méthodes async void — supprimés -->
+    <NoWarn>$(NoWarn);CA1849;xUnit1031</NoWarn>
+  </PropertyGroup>
+
+  <!-- ── Suppressions spécifiques aux projets d'infrastructure (EF) ──────── -->
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Infrastructure'))">
+    <!-- EF Core génère des warnings sur les constructeurs sans paramètre -->
+    <NoWarn>$(NoWarn);CS8618</NoWarn>
+  </PropertyGroup>
+
+</Project>
