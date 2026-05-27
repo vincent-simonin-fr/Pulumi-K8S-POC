@@ -45,14 +45,14 @@ Architecture microservices e-commerce de démonstration en **Clean Architecture*
 
 ## Prérequis
 
-| Outil | Version min | Notes |
-|-------|-------------|-------|
-| [Podman Desktop](https://podman-desktop.io) | 1.10+ | Moteur de containers |
-| [Kind](https://kind.sigs.k8s.io) | 0.23+ | Kubernetes in Docker/Podman |
-| [kubectl](https://kubernetes.io/docs/tasks/tools/) | 1.29+ | CLI Kubernetes |
-| [Pulumi CLI](https://www.pulumi.com/docs/install/) | 3.x | IaC |
-| [.NET SDK](https://dotnet.microsoft.com) | 10.0 | SDK .NET |
-| [podman-compose](https://github.com/containers/podman-compose) | 1.x | Pour le dev local sans K8s |
+| Outil                                                          | Version min | Notes                       |
+| -------------------------------------------------------------- | ----------- | --------------------------- |
+| [Podman Desktop](https://podman-desktop.io)                    | 1.10+       | Moteur de containers        |
+| [Kind](https://kind.sigs.k8s.io)                               | 0.23+       | Kubernetes in Docker/Podman |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/)             | 1.29+       | CLI Kubernetes              |
+| [Pulumi CLI](https://www.pulumi.com/docs/install/)             | 3.x         | IaC                         |
+| [.NET SDK](https://dotnet.microsoft.com)                       | 10.0        | SDK .NET                    |
+| [podman-compose](https://github.com/containers/podman-compose) | 1.x         | Pour le dev local sans K8s  |
 
 ---
 
@@ -63,13 +63,13 @@ Architecture microservices e-commerce de démonstration en **Clean Architecture*
 git clone <repo> && cd Ecommerce
 
 # 2. Démarrer la stack complète
-podman-compose up -d
+podman compose up -d
 
 # 3. Vérifier que tout est healthy
-podman-compose ps
+podman compose ps
 
 # 4. Accès aux APIs
-# Gateway      → http://localhost:8080
+# Gateway      → http://localhost:8080/inventory
 # Order API    → http://localhost:5001/scalar  (doc OpenAPI)
 # Inventory API→ http://localhost:5002/scalar  (doc OpenAPI)
 # RabbitMQ UI  → http://localhost:15672  (guest/guest)
@@ -142,12 +142,13 @@ Inventory    → http://localhost:30080/inventory/...
 
 ### Order API
 
-| Méthode | Route | Description |
-|---------|-------|-------------|
-| `POST`  | `/api/carts` | Ajouter un produit au panier (crée ou met à jour) |
-| `GET`   | `/api/carts/{id}` | Récupérer un panier |
+| Méthode | Route             | Description                                       |
+| ------- | ----------------- | ------------------------------------------------- |
+| `POST`  | `/api/carts`      | Ajouter un produit au panier (crée ou met à jour) |
+| `GET`   | `/api/carts/{id}` | Récupérer un panier                               |
 
 **Exemple — ajouter au panier :**
+
 ```bash
 curl -X POST http://localhost:5001/api/carts \
   -H "Content-Type: application/json" \
@@ -162,11 +163,11 @@ curl -X POST http://localhost:5001/api/carts \
 
 ### Inventory API
 
-| Méthode | Route | Description |
-|---------|-------|-------------|
-| `GET`   | `/api/products` | Lister tous les produits et leur stock |
-| `GET`   | `/api/products/{id}` | Récupérer un produit |
-| `GET`   | `/api/products/{id}/reservations` | Lister les réservations d'un produit |
+| Méthode | Route                             | Description                            |
+| ------- | --------------------------------- | -------------------------------------- |
+| `GET`   | `/api/products`                   | Lister tous les produits et leur stock |
+| `GET`   | `/api/products/{id}`              | Récupérer un produit                   |
+| `GET`   | `/api/products/{id}/reservations` | Lister les réservations d'un produit   |
 
 ---
 
@@ -178,17 +179,17 @@ La durée de réservation est configurable dans `appsettings.json` d'InventoryAp
 
 ```json
 {
-  "Reservation": {
-    "TtlMinutes": 10,
-    "CheckIntervalSeconds": 30
-  }
+    "Reservation": {
+        "TtlMinutes": 10,
+        "CheckIntervalSeconds": 30
+    }
 }
 ```
 
-| Variable | Description | Défaut |
-|----------|-------------|--------|
-| `Reservation:TtlMinutes` | Durée de réservation en minutes | `10` |
-| `Reservation:CheckIntervalSeconds` | Intervalle du background service | `30` |
+| Variable                           | Description                      | Défaut |
+| ---------------------------------- | -------------------------------- | ------ |
+| `Reservation:TtlMinutes`           | Durée de réservation en minutes  | `10`   |
+| `Reservation:CheckIntervalSeconds` | Intervalle du background service | `30`   |
 
 En développement (`appsettings.Development.json`) ces valeurs sont réduites (2 min / 10 sec) pour faciliter les tests.
 
@@ -261,19 +262,19 @@ Sur Kubernetes, un **Job init container** les applique avant le démarrage du po
 
 En environnement `Development`, chaque API expose sa documentation via **Scalar** :
 
-- Order API    → `http://localhost:5001/scalar`
+- Order API → `http://localhost:5001/scalar`
 - Inventory API → `http://localhost:5002/scalar`
 
 ---
 
 ## Observabilité
 
-| Composant | Technologie | Endpoint |
-|-----------|-------------|----------|
-| Logs structurés | Serilog (JSON compact) | stdout |
-| Traces distribuées | OpenTelemetry → OTLP | `OTLP:4317` |
-| Métriques | OpenTelemetry → OTLP | `OTLP:4317` |
-| Health checks | ASP.NET Core | `/health`, `/health/ready` |
+| Composant          | Technologie            | Endpoint                   |
+| ------------------ | ---------------------- | -------------------------- |
+| Logs structurés    | Serilog (JSON compact) | stdout                     |
+| Traces distribuées | OpenTelemetry → OTLP   | `OTLP:4317`                |
+| Métriques          | OpenTelemetry → OTLP   | `OTLP:4317`                |
+| Health checks      | ASP.NET Core           | `/health`, `/health/ready` |
 
 Pour activer Jaeger ou une stack OTLP, configurer `OpenTelemetry:Endpoint` dans les appsettings.
 

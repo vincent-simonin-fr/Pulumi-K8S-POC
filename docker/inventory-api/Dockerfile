@@ -2,7 +2,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY Ecommerce.sln ./
+# Fichiers de configuration MSBuild/NuGet (doivent précéder le restore)
+COPY Directory.Build.props ./
+COPY NuGet.config ./
+COPY global.json ./
+
 COPY src/Shared/Ecommerce.Contracts/Ecommerce.Contracts.csproj src/Shared/Ecommerce.Contracts/
 COPY src/Services/Inventory/Inventory.Domain/Inventory.Domain.csproj src/Services/Inventory/Inventory.Domain/
 COPY src/Services/Inventory/Inventory.Application/Inventory.Application.csproj src/Services/Inventory/Inventory.Application/
@@ -19,13 +23,13 @@ RUN dotnet publish src/Services/Inventory/Inventory.Api/Inventory.Api.csproj \
     --no-restore
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# noble = Ubuntu 24.04 complet (addgroup/adduser disponibles)
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
-USER appuser
+COPY --from=build --chown=app:app /app/publish .
 
-COPY --from=build /app/publish .
+USER app
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080

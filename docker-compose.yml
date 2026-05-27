@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Ecommerce – stack de développement local (Podman Compose)
 # Usage : podman-compose up -d
@@ -15,7 +13,6 @@ volumes:
   rabbitmq-data:
 
 services:
-
   # ── Bases de données ────────────────────────────────────────────────────────
   order-db:
     image: postgres:16-alpine
@@ -57,14 +54,17 @@ services:
 
   # ── Messaging ───────────────────────────────────────────────────────────────
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:4.3.1-management-alpine
     container_name: rabbitmq
+    user: 0:0
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "ecommerce-secret-cookie"
+      ERL_FLAGS: "-setcookie ecommerce-secret-cookie"
     ports:
       - "5672:5672"
-      - "15672:15672"   # Management UI
+      - "15672:15672" # Management UI
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:

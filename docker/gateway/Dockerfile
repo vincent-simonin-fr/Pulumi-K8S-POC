@@ -2,7 +2,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY Ecommerce.sln ./
+# Fichiers de configuration MSBuild/NuGet (doivent précéder le restore)
+COPY Directory.Build.props ./
+COPY NuGet.config ./
+COPY global.json ./
+
 COPY src/Gateway/Ecommerce.Gateway/Ecommerce.Gateway.csproj src/Gateway/Ecommerce.Gateway/
 
 RUN dotnet restore src/Gateway/Ecommerce.Gateway/Ecommerce.Gateway.csproj
@@ -15,13 +19,13 @@ RUN dotnet publish src/Gateway/Ecommerce.Gateway/Ecommerce.Gateway.csproj \
     --no-restore
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# noble = Ubuntu 24.04 complet (addgroup/adduser disponibles)
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
-USER appuser
+COPY --from=build --chown=app:app /app/publish .
 
-COPY --from=build /app/publish .
+USER app
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080

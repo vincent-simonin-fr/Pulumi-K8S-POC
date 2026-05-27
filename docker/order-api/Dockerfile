@@ -2,8 +2,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Copy solution + project files for layer caching
-COPY Ecommerce.sln ./
+# Fichiers de configuration MSBuild/NuGet (doivent précéder le restore)
+COPY Directory.Build.props ./
+COPY NuGet.config ./
+COPY global.json ./
+
+# Copy project files for layer caching
 COPY src/Shared/Ecommerce.Contracts/Ecommerce.Contracts.csproj src/Shared/Ecommerce.Contracts/
 COPY src/Services/Order/Order.Domain/Order.Domain.csproj src/Services/Order/Order.Domain/
 COPY src/Services/Order/Order.Application/Order.Application.csproj src/Services/Order/Order.Application/
@@ -22,14 +26,13 @@ RUN dotnet publish src/Services/Order/Order.Api/Order.Api.csproj \
     --no-restore
 
 # ── Stage 2: Runtime ───────────────────────────────────────────────────────────
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+# noble = Ubuntu 24.04 complet (addgroup/adduser disponibles)
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 
-# Non-root user for security
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
-USER appuser
+COPY --from=build --chown=app:app /app/publish .
 
-COPY --from=build /app/publish .
+USER app
 
 ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
