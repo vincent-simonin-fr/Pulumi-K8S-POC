@@ -14,6 +14,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        // BaseEvent est un objet du domaine (pas une entité DB) :
+        // on l'ignore explicitement pour que EF Core ne tente pas de le mapper.
+        builder.Ignore<Order.Domain.Common.BaseEvent>();
+
         builder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
     }
 }
