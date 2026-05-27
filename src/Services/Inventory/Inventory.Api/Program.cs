@@ -109,6 +109,12 @@ try
         await db.Database.MigrateAsync();
     }
 
+    // ── Seed initial du catalogue produits ─────────────────────────────────────
+    if (app.Configuration.GetValue("Seed:Enabled", defaultValue: true))
+    {
+        await InventorySeeder.SeedAsync(app.Services);
+    }
+
     // ── Endpoints ─────────────────────────────────────────────────────────────
     app.MapProductEndpoints();
     app.MapHealthChecks("/health");

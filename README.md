@@ -154,11 +154,13 @@ curl -X POST http://localhost:5001/api/carts \
   -H "Content-Type: application/json" \
   -d '{
     "customerId": "11111111-0000-0000-0000-000000000001",
-    "productId":  "22222222-0000-0000-0000-000000000002",
-    "productName": "Widget Pro",
+    "productId":  "1816247d-ed4e-4f22-b4e9-5bcc1cecd2da",
+    "productName": "Montre Connectée",
     "unitPrice": 29.99,
     "quantity": 2
   }'
+
+  curl -X POST http://localhost:8080/orders/   -H "Content-Type: application/json"   -d "{\"customerId\": \"11111111-0000-0000-0000-000000000001\", \"productId\": \"1816247d-ed4e-4f22-b4e9-5bcc1cecd2da\", \"productName\": \"Montre Connectee\", \"unitPrice\": 29.99, \"quantity\": 2}"
 ```
 
 ### Inventory API
