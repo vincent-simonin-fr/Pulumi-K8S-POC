@@ -51,12 +51,16 @@ public class MessagingResources : ComponentResource
                                 new() { ContainerPortValue = 5672, Name = "amqp" },
                                 new() { ContainerPortValue = 15672, Name = "management" }
                             },
+                            // ✅ RABBITMQ_DEFAULT_USER / RABBITMQ_DEFAULT_PASS injectés
+                            //    depuis le K8s Secret provisionné par ESO.
+                            EnvFrom = new EnvFromSourceArgs
+                            {
+                                SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.RabbitMqSecretName }
+                            },
                             Env = new List<EnvVarArgs>
                             {
-                                new() { Name = "RABBITMQ_DEFAULT_USER",   Value = "guest" },
-                                new() { Name = "RABBITMQ_DEFAULT_PASS",   Value = "guest" },
-                                new() { Name = "RABBITMQ_ERLANG_COOKIE",  Value = "ecommerce-secret-cookie" },
-                                new() { Name = "ERL_FLAGS",               Value = "-setcookie ecommerce-secret-cookie" }
+                                new() { Name = "RABBITMQ_ERLANG_COOKIE", Value = "ecommerce-secret-cookie" },
+                                new() { Name = "ERL_FLAGS",              Value = "-setcookie ecommerce-secret-cookie" }
                             },
                             ReadinessProbe = new ProbeArgs
                             {

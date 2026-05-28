@@ -18,6 +18,7 @@ public class EcommerceStack : Stack
         var replicasCfg     = new Config("replicas");
         var hpaCfg          = new Config("hpa");
         var resourcesCfg    = new Config("resources");
+        var secretsCfg      = new Config("secrets");  // valeurs gérées par ESO
 
         var nodePort = gatewayCfg.GetInt32("nodePort") ?? 30080;
 
@@ -29,18 +30,37 @@ public class EcommerceStack : Stack
 
         var namespaceName = ns.Metadata.Apply(m => m.Name);
 
+        // ── Secrets (ESO + ClusterSecretStore + ExternalSecrets) ─────────────
+        //  Doit être créé AVANT les pods qui consomment les secrets.
+        //  Les valeurs sont lues depuis `pulumi config set --secret secrets:xxx`
+        //  (voir commentaires dans Pulumi.dev.yaml).
+        var secretsResources = new SecretsResources("secrets", new SecretsResourcesArgs
+        {
+            Namespace           = namespaceName,
+            OrderDbUser         = secretsCfg.Get("orderDbUser")         ?? "postgres",
+            OrderDbPassword     = secretsCfg.Get("orderDbPassword")     ?? "postgres",
+            OrderDbName         = secretsCfg.Get("orderDbName")         ?? "order_db",
+            InventoryDbUser     = secretsCfg.Get("inventoryDbUser")     ?? "postgres",
+            InventoryDbPassword = secretsCfg.Get("inventoryDbPassword") ?? "postgres",
+            InventoryDbName     = secretsCfg.Get("inventoryDbName")     ?? "inventory_db",
+            RabbitMqUser        = secretsCfg.Get("rabbitmqUser")        ?? "guest",
+            RabbitMqPassword    = secretsCfg.Get("rabbitmqPassword")    ?? "guest"
+        });
+
+        var secretsDep = new ComponentResourceOptions { DependsOn = { secretsResources } };
+
         // ── Infrastructure (PostgreSQL + RabbitMQ) ────────────────────────────
         var dbResources = new DatabaseResources("databases", new DatabaseResourcesArgs
         {
             Namespace = namespaceName,
             Replicas  = replicasCfg.GetInt32("db") ?? 1
-        });
+        }, secretsDep);
 
         var mqResources = new MessagingResources("messaging", new MessagingResourcesArgs
         {
             Namespace = namespaceName,
             Replicas  = replicasCfg.GetInt32("rabbitmq") ?? 1
-        });
+        }, secretsDep);
 
         // ── Services applicatifs ──────────────────────────────────────────────
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs

@@ -40,15 +40,17 @@ public class OrderServiceResources : ComponentResource
             IgnoreChanges = args.Hpa.Enabled ? ["spec.replicas"] : []
         };
 
+        // ConfigMap : uniquement les variables non secrètes
+        // Les credentials (ConnectionStrings__OrderDb, RabbitMQ__Username/Password)
+        // sont injectés via les K8s Secrets créés par ESO.
         var configMap = new ConfigMap("order-api-config", new ConfigMapArgs
         {
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "order-api-config" },
             Data = new InputMap<string>
             {
                 ["ASPNETCORE_ENVIRONMENT"] = "Production",
-                ["RabbitMQ__VirtualHost"]  = "/",
-                ["RabbitMQ__Username"]     = "guest",
-                ["RabbitMQ__Password"]     = "guest"
+                ["RabbitMQ__Host"]         = args.RabbitMqHost.Apply(h => h),
+                ["RabbitMQ__VirtualHost"]  = "/"
             }
         }, new CustomResourceOptions { Parent = this });
 
@@ -70,12 +72,48 @@ public class OrderServiceResources : ComponentResource
                     },
                     Spec = new PodSpecArgs
                     {
+                        // Attend que la base order_db soit réellement accessible avant de démarrer.
+                        // pg_isready retourne true dès que postgres accepte les connexions TCP,
+                        // AVANT que l'initialisation du catalogue soit terminée.
+                        // On utilise psql pour vérifier que la base existe ET que les credentials fonctionnent.
+                        InitContainers = new ContainerArgs
+                        {
+                            Name  = "wait-for-dependencies",
+                            Image = "postgres:16-alpine",
+                            // Injecter le secret DB pour POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+                            EnvFrom = new EnvFromSourceArgs
+                            {
+                                SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.OrderDbSecretName }
+                            },
+                            // bash est disponible dans postgres:16-alpine (utilisé par l'entrypoint officiel).
+                            // /dev/tcp est un built-in bash — pas besoin de nc ou curl.
+                            // 1) Attend que la base order_db existe ET que l'auth fonctionne (psql SELECT 1)
+                            // 2) Attend que le port AMQP 5672 de RabbitMQ réponde (TCP)
+                            Command = new[]
+                            {
+                                "/bin/bash", "-c",
+                                "echo 'Waiting for order-db...' && " +
+                                "until PGPASSWORD=$POSTGRES_PASSWORD psql -h order-db -U $POSTGRES_USER -d $POSTGRES_DB -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done && " +
+                                "echo 'order-db ready. Waiting for RabbitMQ...' && " +
+                                "until (echo > /dev/tcp/rabbitmq/5672) 2>/dev/null; do sleep 2; done && " +
+                                "echo 'All dependencies ready.'"
+                            }
+                        },
                         Containers = new ContainerArgs
                         {
                             Name            = "order-api",
                             Image           = args.Image,
                             ImagePullPolicy = "IfNotPresent",
                             Ports           = new ContainerPortArgs { ContainerPortValue = 8080 },
+                            // Variables non secrètes depuis le ConfigMap
+                            EnvFrom = new List<EnvFromSourceArgs>
+                            {
+                                new() { ConfigMapRef = new ConfigMapEnvSourceArgs { Name = "order-api-config" } },
+                                // ✅ ConnectionStrings__OrderDb injecté depuis le secret ESO
+                                new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.OrderDbSecretName } },
+                                // ✅ RabbitMQ__Username + RabbitMQ__Password injectés depuis le secret ESO
+                                new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.RabbitMqSecretName } }
+                            },
                             Env             = BuildEnvVars(args),
                             Resources = new ResourceRequirementsArgs
                             {
@@ -178,17 +216,11 @@ public class OrderServiceResources : ComponentResource
         }, opts);
     }
 
+    // Seules les variables non secrètes restent ici.
+    // ConnectionStrings__OrderDb, RabbitMQ__Username et RabbitMQ__Password
+    // sont injectées via EnvFrom sur les secrets ESO ci-dessus.
     private static List<EnvVarArgs> BuildEnvVars(ServiceResourcesArgs args) =>
     [
-        new() { Name = "ASPNETCORE_ENVIRONMENT", Value = "Production" },
-        new()
-        {
-            Name  = "ConnectionStrings__OrderDb",
-            Value = Output.Format($"Host={args.OrderDbHost};Port=5432;Database=order_db;Username=postgres;Password=postgres")
-        },
-        new() { Name = "RabbitMQ__Host",       Value = args.RabbitMqHost },
-        new() { Name = "RabbitMQ__VirtualHost", Value = "/" },
-        new() { Name = "RabbitMQ__Username",    Value = "guest" },
-        new() { Name = "RabbitMQ__Password",    Value = "guest" }
+        new() { Name = "RabbitMQ__Host", Value = args.RabbitMqHost }
     ];
 }

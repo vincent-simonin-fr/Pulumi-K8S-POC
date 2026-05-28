@@ -124,6 +124,8 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Order API terminated unexpectedly");
+    await Log.CloseAndFlushAsync();
+    Environment.Exit(1);
 }
 finally
 {

@@ -39,6 +39,26 @@ config:
   resources:gatewayMemoryRequest: "64Mi"
   resources:gatewayMemoryLimit: "128Mi"
 
+  # ── Secrets (External Secrets Operator) ─────────────────────────────────
+  # Les valeurs ci-dessous sont des DÉFAUTS pour le développement local.
+  # En production, utilisez pulumi config set --secret pour chiffrer les valeurs :
+  #
+  #   pulumi config set --secret secrets:orderDbPassword     <mot_de_passe>
+  #   pulumi config set --secret secrets:inventoryDbPassword <mot_de_passe>
+  #   pulumi config set --secret secrets:rabbitmqPassword    <mot_de_passe>
+  #
+  # Ces commandes chiffrent la valeur dans ce fichier (format "secure: <encrypted>").
+  # Les clés non sensibles (user, name) peuvent rester en clair.
+  secrets:orderDbUser: postgres
+  secrets:orderDbName: order_db
+  secrets:inventoryDbUser: postgres
+  secrets:inventoryDbName: inventory_db
+  secrets:rabbitmqUser: guest
+  # ⚠️ Ne pas commiter les mots de passe en clair — utiliser --secret (voir ci-dessus)
+  # secrets:orderDbPassword: <chiffré par pulumi config set --secret>
+  # secrets:inventoryDbPassword: <chiffré par pulumi config set --secret>
+  # secrets:rabbitmqPassword: <chiffré par pulumi config set --secret>
+
   # HPA — HorizontalPodAutoscaler
   # ⚠️ Requiert que le Metrics Server soit installé dans le cluster :
   #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

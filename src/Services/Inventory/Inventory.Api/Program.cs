@@ -127,6 +127,8 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Inventory API terminated unexpectedly");
+    await Log.CloseAndFlushAsync();
+    Environment.Exit(1);
 }
 finally
 {

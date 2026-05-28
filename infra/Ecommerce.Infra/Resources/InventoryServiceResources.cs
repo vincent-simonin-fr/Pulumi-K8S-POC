@@ -60,12 +60,44 @@ public class InventoryServiceResources : ComponentResource
                     },
                     Spec = new PodSpecArgs
                     {
+                        // Même logique que order-api : psql vérifie que la base existe
+                        // et que les credentials fonctionnent avant de laisser démarrer l'API.
+                        InitContainers = new ContainerArgs
+                        {
+                            Name  = "wait-for-dependencies",
+                            Image = "postgres:16-alpine",
+                            EnvFrom = new EnvFromSourceArgs
+                            {
+                                SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.InventoryDbSecretName }
+                            },
+                            // bash est disponible dans postgres:16-alpine (utilisé par l'entrypoint officiel).
+                            // /dev/tcp est un built-in bash — pas besoin de nc ou curl.
+                            // 1) Attend que inventory-db existe ET que l'auth fonctionne (psql SELECT 1)
+                            // 2) Attend que le port AMQP 5672 de RabbitMQ réponde (TCP)
+                            Command = new[]
+                            {
+                                "/bin/bash", "-c",
+                                "echo 'Waiting for inventory-db...' && " +
+                                "until PGPASSWORD=$POSTGRES_PASSWORD psql -h inventory-db -U $POSTGRES_USER -d $POSTGRES_DB -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done && " +
+                                "echo 'inventory-db ready. Waiting for RabbitMQ...' && " +
+                                "until (echo > /dev/tcp/rabbitmq/5672) 2>/dev/null; do sleep 2; done && " +
+                                "echo 'All dependencies ready.'"
+                            }
+                        },
                         Containers = new ContainerArgs
                         {
                             Name            = "inventory-api",
                             Image           = args.Image,
                             ImagePullPolicy = "IfNotPresent",
                             Ports           = new ContainerPortArgs { ContainerPortValue = 8080 },
+                            // Variables non secrètes depuis le ConfigMap
+                            EnvFrom = new List<EnvFromSourceArgs>
+                            {
+                                // ✅ ConnectionStrings__InventoryDb injecté depuis le secret ESO
+                                new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.InventoryDbSecretName } },
+                                // ✅ RabbitMQ__Username + RabbitMQ__Password injectés depuis le secret ESO
+                                new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.RabbitMqSecretName } }
+                            },
                             Env             = BuildEnvVars(args),
                             Resources = new ResourceRequirementsArgs
                             {
@@ -168,19 +200,15 @@ public class InventoryServiceResources : ComponentResource
         }, opts);
     }
 
+    // Seules les variables non secrètes restent ici.
+    // ConnectionStrings__InventoryDb, RabbitMQ__Username et RabbitMQ__Password
+    // sont injectées via EnvFrom sur les secrets ESO ci-dessus.
     private List<EnvVarArgs> BuildEnvVars(InventoryServiceResourcesArgs args) =>
     [
-        new() { Name = "ASPNETCORE_ENVIRONMENT", Value = "Production" },
-        new()
-        {
-            Name  = "ConnectionStrings__InventoryDb",
-            Value = Output.Format($"Host={args.InventoryDbHost};Port=5432;Database=inventory_db;Username=postgres;Password=postgres")
-        },
-        new() { Name = "RabbitMQ__Host",                   Value = args.RabbitMqHost },
-        new() { Name = "RabbitMQ__VirtualHost",             Value = "/" },
-        new() { Name = "RabbitMQ__Username",                Value = "guest" },
-        new() { Name = "RabbitMQ__Password",                Value = "guest" },
-        new() { Name = "Reservation__TtlMinutes",           Value = args.ReservationTtlMinutes.ToString() },
-        new() { Name = "Reservation__CheckIntervalSeconds", Value = args.CheckIntervalSeconds.ToString() }
+        new() { Name = "ASPNETCORE_ENVIRONMENT",             Value = "Production" },
+        new() { Name = "RabbitMQ__Host",                     Value = args.RabbitMqHost },
+        new() { Name = "RabbitMQ__VirtualHost",               Value = "/" },
+        new() { Name = "Reservation__TtlMinutes",             Value = args.ReservationTtlMinutes.ToString() },
+        new() { Name = "Reservation__CheckIntervalSeconds",   Value = args.CheckIntervalSeconds.ToString() }
     ];
 }
