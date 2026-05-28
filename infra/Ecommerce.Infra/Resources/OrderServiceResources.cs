@@ -15,6 +15,7 @@ public class ServiceResourcesArgs
     public Input<string> Image { get; set; } = "localhost/ecommerce/order-api:dev";
     public Input<string> OrderDbHost { get; set; } = "order-db";
     public Input<string> RabbitMqHost { get; set; } = "rabbitmq";
+    public Input<string> OtelEndpoint { get; set; } = "http://localhost:4317";
     public int Replicas { get; set; } = 1;
 
     // Requests/limits — obligatoires pour que l'HPA puisse lire les métriques
@@ -221,6 +222,7 @@ public class OrderServiceResources : ComponentResource
     // sont injectées via EnvFrom sur les secrets ESO ci-dessus.
     private static List<EnvVarArgs> BuildEnvVars(ServiceResourcesArgs args) =>
     [
-        new() { Name = "RabbitMQ__Host", Value = args.RabbitMqHost }
+        new() { Name = "RabbitMQ__Host",           Value = args.RabbitMqHost  },
+        new() { Name = "OpenTelemetry__Endpoint",  Value = args.OtelEndpoint  }
     ];
 }

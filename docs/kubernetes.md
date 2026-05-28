@@ -34,7 +34,16 @@ nodes:
       - containerPort: 30080   # NodePort du Gateway
         hostPort: 30080
         protocol: TCP
+      - containerPort: 30030   # NodePort Grafana
+        hostPort: 30030
+        protocol: TCP
+      - containerPort: 30686   # NodePort Jaeger UI
+        hostPort: 30686
+        protocol: TCP
 ```
+
+> **Note** : modifier `kind-config.yaml` nécessite de recréer le cluster (voir [Reset complet](#reset-complet)).  
+> Les extraPortMappings sont fixes à la création du nœud Kind.
 
 ---
 
@@ -61,11 +70,23 @@ kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
 ### Images publiques (pré-charger pour éviter les timeouts)
 
 ```bash
+# Bases de données et messagerie
 podman pull postgres:16-alpine
 podman pull rabbitmq:4.3.1-management-alpine
 
 kind load docker-image postgres:16-alpine                --name ecommerce
 kind load docker-image rabbitmq:4.3.1-management-alpine  --name ecommerce
+
+# Observabilité (optionnel — Kind les pull si réseau disponible)
+podman pull otel/opentelemetry-collector-contrib:0.153.0
+podman pull jaegertracing/all-in-one:1.76.0
+podman pull prom/prometheus:v3.11.3
+podman pull grafana/grafana:13.0.1-security-01
+
+kind load docker-image otel/opentelemetry-collector-contrib:0.153.0 --name ecommerce
+kind load docker-image jaegertracing/all-in-one:1.76.0              --name ecommerce
+kind load docker-image prom/prometheus:v3.11.3                      --name ecommerce
+kind load docker-image grafana/grafana:13.0.1-security-01                       --name ecommerce
 ```
 
 ### Vérifier que les images sont dans Kind
@@ -258,14 +279,26 @@ kubectl config use-context kind-ecommerce
 ### Étape 4 — Recharger toutes les images
 
 ```bash
+# Bases de données / messagerie
 podman pull postgres:16-alpine
 podman pull rabbitmq:4.3.1-management-alpine
-
 kind load docker-image postgres:16-alpine                --name ecommerce
 kind load docker-image rabbitmq:4.3.1-management-alpine  --name ecommerce
+
+# Services applicatifs
 kind load docker-image localhost/ecommerce/order-api:dev     --name ecommerce
 kind load docker-image localhost/ecommerce/inventory-api:dev --name ecommerce
 kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
+
+# Observabilité
+podman pull otel/opentelemetry-collector-contrib:0.153.0
+podman pull jaegertracing/all-in-one:1.76.0
+podman pull prom/prometheus:v3.11.3
+podman pull grafana/grafana:13.0.1-security-01
+kind load docker-image otel/opentelemetry-collector-contrib:0.153.0 --name ecommerce
+kind load docker-image jaegertracing/all-in-one:1.76.0              --name ecommerce
+kind load docker-image prom/prometheus:v3.11.3                      --name ecommerce
+kind load docker-image grafana/grafana:13.0.1-security-01                       --name ecommerce
 ```
 
 ### Étape 5 — Redéployer

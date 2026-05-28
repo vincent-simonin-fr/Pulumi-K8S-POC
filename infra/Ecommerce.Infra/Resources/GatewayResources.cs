@@ -16,6 +16,7 @@ public class GatewayResourcesArgs
     public int NodePort { get; set; } = 30080;
     public Input<string> OrderApiHost { get; set; } = "order-api";
     public Input<string> InventoryApiHost { get; set; } = "inventory-api";
+    public Input<string> OtelEndpoint { get; set; } = "http://localhost:4317";
     public int Replicas { get; set; } = 1;
 
     // Requests/limits — obligatoires pour que l'HPA puisse lire les métriques
@@ -47,7 +48,8 @@ public class GatewayResources : ComponentResource
                 ["ReverseProxy__Clusters__order-cluster__Destinations__order-api__Address"] =
                     Output.Format($"http://{args.OrderApiHost}:8080"),
                 ["ReverseProxy__Clusters__inventory-cluster__Destinations__inventory-api__Address"] =
-                    Output.Format($"http://{args.InventoryApiHost}:8080")
+                    Output.Format($"http://{args.InventoryApiHost}:8080"),
+                ["OpenTelemetry__Endpoint"] = args.OtelEndpoint
             }
         }, new CustomResourceOptions { Parent = this });
 

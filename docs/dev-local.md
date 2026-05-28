@@ -37,6 +37,9 @@ podman compose down -v
 | Order API (OpenAPI) | `http://localhost:5001/scalar` |
 | Inventory API (OpenAPI) | `http://localhost:5002/scalar` |
 | RabbitMQ Management UI | `http://localhost:15672` (guest / guest) |
+| Grafana | `http://localhost:3000` (sans login) |
+| Jaeger UI | `http://localhost:16686` |
+| Prometheus | `http://localhost:9090` |
 
 ### Exemple d'appel direct (dev local, sans gateway)
 
@@ -203,24 +206,17 @@ Les APIs exportent traces et métriques via **OTLP** vers un backend configurabl
 | Métriques | OpenTelemetry → OTLP | `OTLP_ENDPOINT:4317` |
 | Logs | Serilog JSON compact | stdout |
 
-### Activer Jaeger en local
+### Observabilité avec podman-compose
+
+La stack OTel Collector + Jaeger + Prometheus + Grafana est incluse dans `docker-compose.yml`.  
+Elle démarre automatiquement avec `podman compose up -d`.
 
 ```bash
-# Lancer Jaeger (all-in-one)
-podman run -d --name jaeger \
-  -p 16686:16686 \
-  -p 4317:4317 \
-  jaegertracing/all-in-one:latest
-
-# Configurer les APIs (appsettings.Development.json)
-{
-  "OpenTelemetry": {
-    "Endpoint": "http://localhost:4317"
-  }
-}
+# Vérifier que les containers observabilité sont up
+podman compose ps | grep -E "jaeger|otel|prometheus|grafana"
 ```
 
-UI Jaeger : `http://localhost:16686`
+Voir [docs/observability.md](observability.md) pour les détails (dashboards, PromQL, traces).
 
 ### Health checks
 

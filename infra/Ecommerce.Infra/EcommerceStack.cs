@@ -18,9 +18,23 @@ public class EcommerceStack : Stack
         var replicasCfg     = new Config("replicas");
         var hpaCfg          = new Config("hpa");
         var resourcesCfg    = new Config("resources");
-        var secretsCfg      = new Config("secrets");  // valeurs gérées par ESO
+        var secretsCfg      = new Config("secrets");
+        var obsCfg          = new Config("observability");
 
-        var nodePort = gatewayCfg.GetInt32("nodePort") ?? 30080;
+        var nodePort        = gatewayCfg.GetInt32("nodePort")        ?? 30080;
+        var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")    ?? 30030;
+        var jaegerNodePort  = obsCfg.GetInt32("jaegerNodePort")     ?? 30686;
+
+        // ── Observabilité (namespace monitoring — indépendant de ecommerce) ───
+        var observability = new ObservabilityResources("observability", new ObservabilityResourcesArgs
+        {
+            OtelCollectorVersion = obsCfg.Get("otelVersion")      ?? "0.102.0",
+            JaegerVersion        = obsCfg.Get("jaegerVersion")     ?? "1.58.0",
+            PrometheusVersion    = obsCfg.Get("prometheusVersion") ?? "v2.52.0",
+            GrafanaVersion       = obsCfg.Get("grafanaVersion")    ?? "11.1.0",
+            GrafanaNodePort      = grafanaNodePort,
+            JaegerUiNodePort     = jaegerNodePort
+        });
 
         // ── Namespace ─────────────────────────────────────────────────────────
         var ns = new Namespace("ecommerce-ns", new NamespaceArgs
@@ -69,6 +83,7 @@ public class EcommerceStack : Stack
             Image          = orderApiCfg.Get("image") ?? "localhost/ecommerce/order-api:dev",
             OrderDbHost    = dbResources.OrderDbServiceName,
             RabbitMqHost   = mqResources.RabbitMqServiceName,
+            OtelEndpoint   = observability.OtelCollectorEndpoint,
             Replicas       = replicasCfg.GetInt32("orderApi") ?? 1,
             CpuRequest     = resourcesCfg.Get("orderApiCpuRequest")    ?? "100m",
             CpuLimit       = resourcesCfg.Get("orderApiCpuLimit")      ?? "500m",
@@ -90,6 +105,7 @@ public class EcommerceStack : Stack
             Image                 = inventoryApiCfg.Get("image") ?? "localhost/ecommerce/inventory-api:dev",
             InventoryDbHost       = dbResources.InventoryDbServiceName,
             RabbitMqHost          = mqResources.RabbitMqServiceName,
+            OtelEndpoint          = observability.OtelCollectorEndpoint,
             ReservationTtlMinutes = reservationCfg.GetInt32("ttlMinutes") ?? 10,
             CheckIntervalSeconds  = reservationCfg.GetInt32("checkIntervalSeconds") ?? 30,
             Replicas              = replicasCfg.GetInt32("inventoryApi") ?? 1,
@@ -114,6 +130,7 @@ public class EcommerceStack : Stack
             NodePort         = nodePort,
             OrderApiHost     = orderApi.ServiceName,
             InventoryApiHost = inventoryApi.ServiceName,
+            OtelEndpoint     = observability.OtelCollectorEndpoint,
             Replicas         = replicasCfg.GetInt32("gateway") ?? 1,
             CpuRequest       = resourcesCfg.Get("gatewayCpuRequest")    ?? "50m",
             CpuLimit         = resourcesCfg.Get("gatewayCpuLimit")      ?? "250m",
@@ -133,9 +150,13 @@ public class EcommerceStack : Stack
         GatewayUrl            = Output.Create($"http://localhost:{nodePort}");
         OrderApiHealthUrl     = Output.Create($"http://localhost:{nodePort}/health/orders");
         InventoryApiHealthUrl = Output.Create($"http://localhost:{nodePort}/health/inventory");
+        GrafanaUrl            = Output.Create($"http://localhost:{grafanaNodePort}");
+        JaegerUrl             = Output.Create($"http://localhost:{jaegerNodePort}");
     }
 
-    [Output] public Output<string> GatewayUrl { get; set; }
-    [Output] public Output<string> OrderApiHealthUrl { get; set; }
+    [Output] public Output<string> GatewayUrl            { get; set; }
+    [Output] public Output<string> OrderApiHealthUrl     { get; set; }
     [Output] public Output<string> InventoryApiHealthUrl { get; set; }
+    [Output] public Output<string> GrafanaUrl            { get; set; }
+    [Output] public Output<string> JaegerUrl             { get; set; }
 }

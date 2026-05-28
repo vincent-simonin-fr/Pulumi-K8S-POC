@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 using Serilog.Formatting.Compact;
 
@@ -20,6 +22,17 @@ try
     builder.Services
         .AddReverseProxy()
         .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
+
+    // ── OpenTelemetry ──────────────────────────────────────────────────────────
+    builder.Services.AddOpenTelemetry()
+        .ConfigureResource(r => r.AddService(
+            builder.Configuration["OpenTelemetry:ServiceName"] ?? "gateway"))
+        .WithTracing(t => t
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddOtlpExporter(o =>
+                o.Endpoint = new Uri(
+                    builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317")));
 
     // ── Health checks ──────────────────────────────────────────────────────────
     builder.Services.AddHealthChecks()
@@ -43,6 +56,8 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Gateway terminated unexpectedly");
+    await Log.CloseAndFlushAsync();
+    Environment.Exit(1);
 }
 finally
 {

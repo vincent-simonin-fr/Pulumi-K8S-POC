@@ -59,6 +59,15 @@ config:
   # secrets:inventoryDbPassword: <chiffré par pulumi config set --secret>
   # secrets:rabbitmqPassword: <chiffré par pulumi config set --secret>
 
+  # Observabilite — OTel Collector + Jaeger + Prometheus + Grafana
+  # NodePorts exposes sur l'hote via Kind extraPortMappings (kind-config.yaml).
+  observability:grafanaNodePort:   "30030"
+  observability:jaegerNodePort:    "30686"
+  observability:otelVersion:       "0.153.0"
+  observability:jaegerVersion:     "1.76.0"
+  observability:prometheusVersion: "v3.11.3"
+  observability:grafanaVersion:    "13.0.1-security-01"
+
   # HPA — HorizontalPodAutoscaler
   # ⚠️ Requiert que le Metrics Server soit installé dans le cluster :
   #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml

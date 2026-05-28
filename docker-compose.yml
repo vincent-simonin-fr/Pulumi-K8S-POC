@@ -11,6 +11,7 @@ volumes:
   order-db-data:
   inventory-db-data:
   rabbitmq-data:
+  prometheus-data:
 
 services:
   # ── Bases de données ────────────────────────────────────────────────────────
@@ -130,10 +131,74 @@ services:
     container_name: gateway
     environment:
       ASPNETCORE_ENVIRONMENT: Production
+      OpenTelemetry__Endpoint: http://otel-collector:4317
     ports:
       - "8080:8080"
     depends_on:
       - order-api
       - inventory-api
+      - otel-collector
+    networks:
+      - ecommerce-net
+
+  # ── Observabilité ──────────────────────────────────────────────────────────
+  # Même pipeline que Kubernetes : APIs → OTel Collector → Jaeger (traces)
+  #                                                       → Prometheus (métriques)
+  #                                                       → Grafana (dashboards)
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    container_name: jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      MEMORY_MAX_TRACES: "50000"
+    ports:
+      - "16686:16686"   # UI → http://localhost:16686
+    networks:
+      - ecommerce-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./docker/observability/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"     # OTLP gRPC (utilisé par les APIs)
+      - "4318:4318"     # OTLP HTTP
+    depends_on:
+      - jaeger
+    networks:
+      - ecommerce-net
+
+  prometheus:
+    image: prom/prometheus:v3.11.3
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    volumes:
+      - ./docker/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+    networks:
+      - ecommerce-net
+
+  grafana:
+    image: grafana/grafana:13.0.1-security-01
+    container_name: grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./docker/observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "3000:3000"     # UI → http://localhost:3000
+    depends_on:
+      - prometheus
+      - jaeger
     networks:
       - ecommerce-net
