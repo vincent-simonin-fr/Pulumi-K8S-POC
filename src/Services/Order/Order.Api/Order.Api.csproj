@@ -22,7 +22,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.*" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.*" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.*" />
-    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.*" />
+<PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.*" />
     <PackageReference Include="AspNetCore.HealthChecks.RabbitMQ" Version="9.*" />
   </ItemGroup>
 

@@ -42,6 +42,12 @@ podman pull prom/prometheus:v3.11.3
 kind load docker-image prom/prometheus:v3.11.3 --name ecommerce
 podman pull grafana/grafana:13.0.1-security-01
 kind load docker-image grafana/grafana:13.0.1-security-01 --name ecommerce
+podman pull prometheuscommunity/postgres-exporter:v0.16.0
+kind load docker-image prometheuscommunity/postgres-exporter:v0.16.0 --name ecommerce
+podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 --name ecommerce
+podman pull quay.io/prometheus/node-exporter:v1.9.1
+kind load docker-image quay.io/prometheus/node-exporter:v1.9.1 --name ecommerce
 
 :: ------------------------------------------------------------------
 echo.

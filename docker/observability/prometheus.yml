@@ -6,3 +6,9 @@ scrape_configs:
   - job_name: otel-collector
     static_configs:
       - targets: ['otel-collector:8889']
+  - job_name: postgres-order
+    static_configs:
+      - targets: ['postgres-exporter-order:9187']
+  - job_name: postgres-inventory
+    static_configs:
+      - targets: ['postgres-exporter-inventory:9187']

@@ -66,6 +66,9 @@ try
         .WithMetrics(m => m
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
+            // Métriques runtime .NET 9/10 : GC, thread pool, exceptions, mémoire
+            // Via le meter natif "System.Runtime" (pas besoin de package externe)
+            .AddMeter("System.Runtime")
             .AddOtlpExporter(o =>
                 o.Endpoint = new Uri(builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317")));
 

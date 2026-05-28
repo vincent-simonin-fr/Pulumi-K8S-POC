@@ -62,15 +62,22 @@ public class MessagingResources : ComponentResource
                                 new() { Name = "RABBITMQ_ERLANG_COOKIE", Value = "ecommerce-secret-cookie" },
                                 new() { Name = "ERL_FLAGS",              Value = "-setcookie ecommerce-secret-cookie" }
                             },
+                            // rabbitmq-diagnostics -q ping echoue souvent en K8s (Erlang distribution
+                            // ne resout pas le hostname du pod). On teste directement le port AMQP
+                            // via TCP socket — si :5672 repond, RabbitMQ est pret pour les APIs.
                             ReadinessProbe = new ProbeArgs
                             {
-                                Exec = new ExecActionArgs
-                                {
-                                    Command = new[] { "rabbitmq-diagnostics", "-q", "ping" }
-                                },
-                                InitialDelaySeconds = 30,
-                                PeriodSeconds = 10,
-                                FailureThreshold = 6
+                                TcpSocket           = new TCPSocketActionArgs { Port = 5672 },
+                                InitialDelaySeconds = 15,
+                                PeriodSeconds       = 5,
+                                FailureThreshold    = 6
+                            },
+                            LivenessProbe = new ProbeArgs
+                            {
+                                TcpSocket           = new TCPSocketActionArgs { Port = 5672 },
+                                InitialDelaySeconds = 60,
+                                PeriodSeconds       = 30,
+                                FailureThreshold    = 3
                             }
                         }
                     }

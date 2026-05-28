@@ -1,8 +1,12 @@
+using System.IO;
 using Pulumi;
 using Pulumi.Kubernetes.Core.V1;
+using Pulumi.Kubernetes.Rbac.V1;
 using Pulumi.Kubernetes.Types.Inputs.Apps.V1;
 using Pulumi.Kubernetes.Types.Inputs.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Meta.V1;
+using Pulumi.Kubernetes.Types.Inputs.Rbac.V1;
+using DaemonSet = Pulumi.Kubernetes.Apps.V1.DaemonSet;
 using Deployment = Pulumi.Kubernetes.Apps.V1.Deployment;
 
 namespace Ecommerce.Infra.Resources;
@@ -255,6 +259,18 @@ scrape_configs:
   - job_name: otel-collector
     static_configs:
       - targets: ['otel-collector.monitoring.svc.cluster.local:8889']
+  - job_name: postgres-order
+    static_configs:
+      - targets: ['postgres-exporter-order.ecommerce.svc.cluster.local:9187']
+  - job_name: postgres-inventory
+    static_configs:
+      - targets: ['postgres-exporter-inventory.ecommerce.svc.cluster.local:9187']
+  - job_name: kube-state-metrics
+    static_configs:
+      - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter.monitoring.svc.cluster.local:9100']
 "
             }
         }, nsDep);
@@ -349,6 +365,30 @@ datasources:
             }
         }, nsDep);
 
+        // ── Grafana dashboard provisioning ───────────────────────────────────────
+        // Les fichiers JSON sont lus au moment de pulumi up (répertoire courant = infra/Ecommerce.Infra).
+        // Les mêmes fichiers sont montés en volume dans docker-compose via bind mount.
+        var dashboardProviderMap = new ConfigMap("grafana-dashboard-provider", new ConfigMapArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "grafana-dashboard-provider" },
+            Data     = new InputMap<string>
+            {
+                ["provider.yaml"] = File.ReadAllText("../../docker/observability/dashboards/provider.yaml")
+            }
+        }, nsDep);
+
+        var dashboardsMap = new ConfigMap("grafana-dashboards", new ConfigMapArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "grafana-dashboards" },
+            Data     = new InputMap<string>
+            {
+                ["services.json"]   = File.ReadAllText("../../docker/observability/dashboards/services.json"),
+                ["database.json"]   = File.ReadAllText("../../docker/observability/dashboards/database.json"),
+                ["runtime.json"]    = File.ReadAllText("../../docker/observability/dashboards/runtime.json"),
+                ["kubernetes.json"] = File.ReadAllText("../../docker/observability/dashboards/kubernetes.json")
+            }
+        }, nsDep);
+
         _ = new Deployment("grafana-deploy", new DeploymentArgs
         {
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "grafana" },
@@ -380,15 +420,16 @@ datasources:
                                 new() { Name = "GF_AUTH_DISABLE_LOGIN_FORM", Value = "true"  }
                             },
                             Ports        = new ContainerPortArgs { Name = "http", ContainerPortValue = 3000 },
-                            VolumeMounts = new VolumeMountArgs
+                            VolumeMounts = new List<VolumeMountArgs>
                             {
-                                Name      = "datasources",
-                                MountPath = "/etc/grafana/provisioning/datasources"
+                                new() { Name = "datasources",        MountPath = "/etc/grafana/provisioning/datasources" },
+                                new() { Name = "dashboard-provider", MountPath = "/etc/grafana/provisioning/dashboards"  },
+                                new() { Name = "dashboards",         MountPath = "/var/lib/grafana/dashboards"           }
                             },
                             Resources = new ResourceRequirementsArgs
                             {
-                                Requests = new InputMap<string> { ["cpu"] = "50m",  ["memory"] = "64Mi"  },
-                                Limits   = new InputMap<string> { ["cpu"] = "200m", ["memory"] = "256Mi" }
+                                Requests = new InputMap<string> { ["cpu"] = "50m",  ["memory"] = "128Mi" },
+                                Limits   = new InputMap<string> { ["cpu"] = "200m", ["memory"] = "512Mi" }
                             },
                             ReadinessProbe = new ProbeArgs
                             {
@@ -397,15 +438,16 @@ datasources:
                                 PeriodSeconds       = 5
                             }
                         },
-                        Volumes = new VolumeArgs
+                        Volumes = new List<VolumeArgs>
                         {
-                            Name      = "datasources",
-                            ConfigMap = new ConfigMapVolumeSourceArgs { Name = "grafana-datasources" }
+                            new() { Name = "datasources",        ConfigMap = new ConfigMapVolumeSourceArgs { Name = "grafana-datasources" }        },
+                            new() { Name = "dashboard-provider", ConfigMap = new ConfigMapVolumeSourceArgs { Name = "grafana-dashboard-provider" }  },
+                            new() { Name = "dashboards",         ConfigMap = new ConfigMapVolumeSourceArgs { Name = "grafana-dashboards" }          }
                         }
                     }
                 }
             }
-        }, new CustomResourceOptions { Parent = this, DependsOn = grafanaDatasourcesMap });
+        }, new CustomResourceOptions { Parent = this, DependsOn = new[] { grafanaDatasourcesMap, dashboardProviderMap, dashboardsMap } });
 
         _ = new Service("grafana-svc", new ServiceArgs
         {
@@ -421,6 +463,234 @@ datasources:
                     TargetPort = 3000,
                     NodePort   = args.GrafanaNodePort
                 }
+            }
+        }, nsDep);
+
+        // ── kube-state-metrics ───────────────────────────────────────────────────
+        // Expose l'état des objets K8s (pods, deployments, HPA, ...) en métriques Prometheus.
+        // ClusterRole requis car les objets sont cluster-scoped.
+        var ksmSa = new ServiceAccount("ksm-sa", new ServiceAccountArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "kube-state-metrics" }
+        }, nsDep);
+
+        var ksmCr = new ClusterRole("ksm-cr", new ClusterRoleArgs
+        {
+            Metadata = new ObjectMetaArgs { Name = "kube-state-metrics" },
+            Rules    = new List<PolicyRuleArgs>
+            {
+                new()
+                {
+                    ApiGroups = new[] { "" },
+                    Resources = new[] { "pods", "nodes", "services", "endpoints", "persistentvolumeclaims", "namespaces", "replicationcontrollers" },
+                    Verbs     = new[] { "list", "watch" }
+                },
+                new()
+                {
+                    ApiGroups = new[] { "apps" },
+                    Resources = new[] { "deployments", "replicasets", "statefulsets", "daemonsets" },
+                    Verbs     = new[] { "list", "watch" }
+                },
+                new()
+                {
+                    ApiGroups = new[] { "autoscaling" },
+                    Resources = new[] { "horizontalpodautoscalers" },
+                    Verbs     = new[] { "list", "watch" }
+                },
+                new()
+                {
+                    ApiGroups = new[] { "batch" },
+                    Resources = new[] { "jobs", "cronjobs" },
+                    Verbs     = new[] { "list", "watch" }
+                }
+            }
+        }, resourceOpts);
+
+        _ = new ClusterRoleBinding("ksm-crb", new ClusterRoleBindingArgs
+        {
+            Metadata = new ObjectMetaArgs { Name = "kube-state-metrics" },
+            RoleRef  = new RoleRefArgs
+            {
+                ApiGroup = "rbac.authorization.k8s.io",
+                Kind     = "ClusterRole",
+                Name     = "kube-state-metrics"
+            },
+            Subjects = new SubjectArgs
+            {
+                Kind      = "ServiceAccount",
+                Name      = "kube-state-metrics",
+                Namespace = args.Namespace
+            }
+        }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { ksmCr, ksmSa } });
+
+        _ = new Deployment("ksm-deploy", new DeploymentArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "kube-state-metrics" },
+            Spec     = new DeploymentSpecArgs
+            {
+                Replicas = 1,
+                Selector = new LabelSelectorArgs
+                {
+                    MatchLabels = new InputMap<string> { ["app"] = "kube-state-metrics" }
+                },
+                Template = new PodTemplateSpecArgs
+                {
+                    Metadata = new ObjectMetaArgs
+                    {
+                        Labels = new InputMap<string> { ["app"] = "kube-state-metrics" }
+                    },
+                    Spec = new PodSpecArgs
+                    {
+                        ServiceAccountName = "kube-state-metrics",
+                        Containers         = new ContainerArgs
+                        {
+                            Name            = "kube-state-metrics",
+                            Image           = "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0",
+                            ImagePullPolicy = "IfNotPresent",
+                            Ports = new List<ContainerPortArgs>
+                            {
+                                new() { Name = "metrics",   ContainerPortValue = 8080 },
+                                new() { Name = "telemetry", ContainerPortValue = 8081 }
+                            },
+                            Resources = new ResourceRequirementsArgs
+                            {
+                                Requests = new InputMap<string> { ["cpu"] = "10m",  ["memory"] = "64Mi"  },
+                                Limits   = new InputMap<string> { ["cpu"] = "100m", ["memory"] = "128Mi" }
+                            },
+                            ReadinessProbe = new ProbeArgs
+                            {
+                                HttpGet             = new HTTPGetActionArgs { Path = "/healthz", Port = 8080 },
+                                InitialDelaySeconds = 5,
+                                PeriodSeconds       = 5
+                            }
+                        }
+                    }
+                }
+            }
+        }, new CustomResourceOptions { Parent = this, DependsOn = ksmSa });
+
+        _ = new Service("ksm-svc", new ServiceArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "kube-state-metrics" },
+            Spec     = new ServiceSpecArgs
+            {
+                Selector = new InputMap<string> { ["app"] = "kube-state-metrics" },
+                Ports    = new List<ServicePortArgs>
+                {
+                    new() { Name = "metrics",   Port = 8080, TargetPort = 8080 },
+                    new() { Name = "telemetry", Port = 8081, TargetPort = 8081 }
+                }
+            }
+        }, nsDep);
+
+        // ── node-exporter ────────────────────────────────────────────────────────
+        // DaemonSet : tourne sur chaque noeud Kind.
+        // hostPID + hostNetwork + montage /proc, /sys, / → métriques CPU, RAM, disque, réseau.
+        var neSa = new ServiceAccount("ne-sa", new ServiceAccountArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "node-exporter" }
+        }, nsDep);
+
+        var neCr = new ClusterRole("ne-cr", new ClusterRoleArgs
+        {
+            Metadata = new ObjectMetaArgs { Name = "node-exporter" },
+            Rules    = new List<PolicyRuleArgs>
+            {
+                new()
+                {
+                    ApiGroups = new[] { "" },
+                    Resources = new[] { "nodes" },
+                    Verbs     = new[] { "list", "watch" }
+                }
+            }
+        }, resourceOpts);
+
+        _ = new ClusterRoleBinding("ne-crb", new ClusterRoleBindingArgs
+        {
+            Metadata = new ObjectMetaArgs { Name = "node-exporter" },
+            RoleRef  = new RoleRefArgs
+            {
+                ApiGroup = "rbac.authorization.k8s.io",
+                Kind     = "ClusterRole",
+                Name     = "node-exporter"
+            },
+            Subjects = new SubjectArgs
+            {
+                Kind      = "ServiceAccount",
+                Name      = "node-exporter",
+                Namespace = args.Namespace
+            }
+        }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { neCr, neSa } });
+
+        _ = new DaemonSet("node-exporter-ds", new DaemonSetArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "node-exporter" },
+            Spec     = new DaemonSetSpecArgs
+            {
+                Selector = new LabelSelectorArgs
+                {
+                    MatchLabels = new InputMap<string> { ["app"] = "node-exporter" }
+                },
+                Template = new PodTemplateSpecArgs
+                {
+                    Metadata = new ObjectMetaArgs
+                    {
+                        Labels = new InputMap<string> { ["app"] = "node-exporter" }
+                    },
+                    Spec = new PodSpecArgs
+                    {
+                        ServiceAccountName = "node-exporter",
+                        HostPID            = true,
+                        HostNetwork        = true,
+                        Tolerations = new TolerationArgs
+                        {
+                            Operator = "Exists"  // tolere tous les taints (noeud control-plane de Kind)
+                        },
+                        Containers = new ContainerArgs
+                        {
+                            Name            = "node-exporter",
+                            Image           = "quay.io/prometheus/node-exporter:v1.9.1",
+                            ImagePullPolicy = "IfNotPresent",
+                            Args = new[]
+                            {
+                                "--path.procfs=/host/proc",
+                                "--path.sysfs=/host/sys",
+                                "--path.rootfs=/host/root",
+                                "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($|/)"
+                            },
+                            Ports = new ContainerPortArgs { Name = "metrics", ContainerPortValue = 9100 },
+                            VolumeMounts = new List<VolumeMountArgs>
+                            {
+                                new() { Name = "proc",   MountPath = "/host/proc", ReadOnly = true },
+                                new() { Name = "sys",    MountPath = "/host/sys",  ReadOnly = true },
+                                new() { Name = "rootfs", MountPath = "/host/root", ReadOnly = true }
+                            },
+                            Resources = new ResourceRequirementsArgs
+                            {
+                                Requests = new InputMap<string> { ["cpu"] = "10m",  ["memory"] = "32Mi" },
+                                Limits   = new InputMap<string> { ["cpu"] = "100m", ["memory"] = "64Mi" }
+                            }
+                        },
+                        Volumes = new List<VolumeArgs>
+                        {
+                            new() { Name = "proc",   HostPath = new HostPathVolumeSourceArgs { Path = "/proc" } },
+                            new() { Name = "sys",    HostPath = new HostPathVolumeSourceArgs { Path = "/sys"  } },
+                            new() { Name = "rootfs", HostPath = new HostPathVolumeSourceArgs { Path = "/"     } }
+                        }
+                    }
+                }
+            }
+        }, new CustomResourceOptions { Parent = this, DependsOn = neSa });
+
+        _ = new Service("node-exporter-svc", new ServiceArgs
+        {
+            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "node-exporter" },
+            Spec     = new ServiceSpecArgs
+            {
+                // ClusterIP (pas headless) pour que le static_config Prometheus fonctionne
+                // sur Kind single-node — le ClusterIP pointe vers le seul pod node-exporter.
+                Selector = new InputMap<string> { ["app"] = "node-exporter" },
+                Ports    = new ServicePortArgs { Name = "metrics", Port = 9100, TargetPort = 9100 }
             }
         }, nsDep);
 

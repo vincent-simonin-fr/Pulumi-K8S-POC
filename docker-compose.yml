@@ -195,10 +195,43 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
     volumes:
       - ./docker/observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./docker/observability/dashboards/provider.yaml:/etc/grafana/provisioning/dashboards/provider.yaml:ro
+      - ./docker/observability/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"     # UI → http://localhost:3000
     depends_on:
       - prometheus
       - jaeger
+    networks:
+      - ecommerce-net
+
+  # ── postgres_exporter ───────────────────────────────────────────────────────
+  postgres-exporter-order:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: postgres-exporter-order
+    environment:
+      DATA_SOURCE_URI: "order-db:5432/order_db?sslmode=disable"
+      DATA_SOURCE_USER: postgres
+      DATA_SOURCE_PASS: postgres
+    ports:
+      - "9187:9187"
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - ecommerce-net
+
+  postgres-exporter-inventory:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: postgres-exporter-inventory
+    environment:
+      DATA_SOURCE_URI: "inventory-db:5432/inventory_db?sslmode=disable"
+      DATA_SOURCE_USER: postgres
+      DATA_SOURCE_PASS: postgres
+    ports:
+      - "9188:9187"
+    depends_on:
+      inventory-db:
+        condition: service_healthy
     networks:
       - ecommerce-net
