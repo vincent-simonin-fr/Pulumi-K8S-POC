@@ -10,10 +10,11 @@ namespace Ecommerce.Infra.Resources;
 public class GatewayResourcesArgs
 {
     public Input<string> Namespace { get; set; } = "ecommerce";
-    public Input<string> Image { get; set; } = "ecommerce/gateway:dev";
+    public Input<string> Image { get; set; } = "localhost/ecommerce/gateway:dev";
     public int NodePort { get; set; } = 30080;
     public Input<string> OrderApiHost { get; set; } = "order-api";
     public Input<string> InventoryApiHost { get; set; } = "inventory-api";
+    public int Replicas { get; set; } = 1;
 }
 
 public class GatewayResources : ComponentResource
@@ -41,7 +42,7 @@ public class GatewayResources : ComponentResource
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "gateway" },
             Spec = new DeploymentSpecArgs
             {
-                Replicas = 1,
+                Replicas = args.Replicas,
                 Selector = new LabelSelectorArgs
                 {
                     MatchLabels = new InputMap<string> { ["app"] = "gateway" }

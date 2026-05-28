@@ -1,16 +1,22 @@
 encryptionsalt: v1:xj4hoKmTd2c=:v1:FgcGyMtAeIhtCKbK:CQO6o0UvlevmAveQNq3ETt31hTip5A==
 
 config:
-  # Images Docker — à construire localement et charger dans Kind avec :
-  # podman build -t ecommerce/order-api:dev -f docker/order-api/Dockerfile .
-  # kind load docker-image ecommerce/order-api:dev
-  orderApi:image: ecommerce/order-api:dev
-  inventoryApi:image: ecommerce/inventory-api:dev
-  gateway:image: ecommerce/gateway:dev
+  # Images Docker (Podman préfixe les images locales avec localhost/)
+  orderApi:image: localhost/ecommerce/order-api:dev
+  inventoryApi:image: localhost/ecommerce/inventory-api:dev
+  gateway:image: localhost/ecommerce/gateway:dev
 
-  # Ports NodePort exposés sur Kind
+  # Port NodePort exposé sur Kind
   gateway:nodePort: "30080"
 
-  # Réservation
+  # Réservation de stock
   reservation:ttlMinutes: "10"
   reservation:checkIntervalSeconds: "30"
+
+  # Nombre de réplicas
+  # ⚠️ db et rabbitmq : garder à 1 sans réplication configurée
+  replicas:orderApi: "1"
+  replicas:inventoryApi: "1"
+  replicas:gateway: "1"
+  replicas:db: "1"
+  replicas:rabbitmq: "1"

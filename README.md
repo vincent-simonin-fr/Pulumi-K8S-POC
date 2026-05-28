@@ -396,3 +396,11 @@ podman stop ecommerce-control-plane
 # Relancer :
 podman start ecommerce-control-plane
 ```
+
+## Visual Studio Debugging Pulumi project
+
+1. Ouvrir `Ecommerce.sln` dans Visual Studio
+2. Clic droit sur le projet `Ecommerce.Infra` → "Set as Startup Project"
+3. Placer un breakpoint dans `Ecommerce.Infra/Program.cs`
+4. Ouvrir un terminal et exécuter `pulumi up --attach-debugger --yes` dans le dossier `infra/Ecommerce.Infra`
+5. Attacher le débogueur à `dotnet` (Ctrl+Alt+P et choisir le processus `dotnet` qui exécute le projet Pulumi)

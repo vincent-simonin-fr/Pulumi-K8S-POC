@@ -13,6 +13,7 @@ public class ServiceResourcesArgs
     public Input<string> Image { get; set; } = "localhost/ecommerce/order-api:dev";
     public Input<string> OrderDbHost { get; set; } = "order-db";
     public Input<string> RabbitMqHost { get; set; } = "rabbitmq";
+    public int Replicas { get; set; } = 1;
 }
 
 public class OrderServiceResources : ComponentResource
@@ -43,7 +44,7 @@ public class OrderServiceResources : ComponentResource
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "order-api" },
             Spec = new DeploymentSpecArgs
             {
-                Replicas = 1,
+                Replicas = args.Replicas,
                 Selector = new LabelSelectorArgs
                 {
                     MatchLabels = new InputMap<string> { ["app"] = "order-api" }

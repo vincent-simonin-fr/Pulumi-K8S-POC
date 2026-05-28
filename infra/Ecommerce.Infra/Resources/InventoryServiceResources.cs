@@ -15,6 +15,7 @@ public class InventoryServiceResourcesArgs
     public Input<string> RabbitMqHost { get; set; } = "rabbitmq";
     public int ReservationTtlMinutes { get; set; } = 10;
     public int CheckIntervalSeconds { get; set; } = 30;
+    public int Replicas { get; set; } = 1;
 }
 
 public class InventoryServiceResources : ComponentResource
@@ -32,7 +33,7 @@ public class InventoryServiceResources : ComponentResource
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "inventory-api" },
             Spec = new DeploymentSpecArgs
             {
-                Replicas = 1,
+                Replicas = args.Replicas,
                 Selector = new LabelSelectorArgs
                 {
                     MatchLabels = new InputMap<string> { ["app"] = "inventory-api" }

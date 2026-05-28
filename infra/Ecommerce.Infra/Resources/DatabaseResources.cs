@@ -10,6 +10,8 @@ namespace Ecommerce.Infra.Resources;
 public class DatabaseResourcesArgs
 {
     public Input<string> Namespace { get; set; } = "ecommerce";
+    /// <remarks>⚠️ Garder à 1 en dev — scaler PostgreSQL sans réplication active corrompt les données.</remarks>
+    public int Replicas { get; set; } = 1;
 }
 
 public class DatabaseResources : ComponentResource
@@ -52,7 +54,7 @@ public class DatabaseResources : ComponentResource
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "order-db" },
             Spec = new DeploymentSpecArgs
             {
-                Replicas = 1,
+                Replicas = args.Replicas,
                 Selector = new LabelSelectorArgs
                 {
                     MatchLabels = new InputMap<string> { ["app"] = "order-db" }
@@ -142,7 +144,7 @@ public class DatabaseResources : ComponentResource
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "inventory-db" },
             Spec = new DeploymentSpecArgs
             {
-                Replicas = 1,
+                Replicas = args.Replicas,
                 Selector = new LabelSelectorArgs
                 {
                     MatchLabels = new InputMap<string> { ["app"] = "inventory-db" }

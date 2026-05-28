@@ -1,4 +1,3 @@
-using Ecommerce.Infra.Resources;
 using Pulumi;
 using Pulumi.Kubernetes.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Core.V1;
@@ -10,7 +9,15 @@ public class EcommerceStack : Stack
 {
     public EcommerceStack()
     {
-        var config = new Config();
+        // ── Config par namespace (format YAML : "namespace:key") ─────────────
+        // new Config("orderApi").Get("image")  lit  "orderApi:image"  dans Pulumi.dev.yaml
+        var orderApiCfg     = new Config("orderApi");
+        var inventoryApiCfg = new Config("inventoryApi");
+        var gatewayCfg      = new Config("gateway");
+        var reservationCfg  = new Config("reservation");
+        var replicasCfg     = new Config("replicas");
+
+        var nodePort = gatewayCfg.GetInt32("nodePort") ?? 30080;
 
         // ── Namespace ─────────────────────────────────────────────────────────
         var ns = new Namespace("ecommerce-ns", new NamespaceArgs
@@ -23,46 +30,51 @@ public class EcommerceStack : Stack
         // ── Infrastructure (PostgreSQL + RabbitMQ) ────────────────────────────
         var dbResources = new DatabaseResources("databases", new DatabaseResourcesArgs
         {
-            Namespace = namespaceName
+            Namespace = namespaceName,
+            Replicas  = replicasCfg.GetInt32("db") ?? 1
         });
 
         var mqResources = new MessagingResources("messaging", new MessagingResourcesArgs
         {
-            Namespace = namespaceName
+            Namespace = namespaceName,
+            Replicas  = replicasCfg.GetInt32("rabbitmq") ?? 1
         });
 
         // ── Services applicatifs ──────────────────────────────────────────────
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
         {
-            Namespace     = namespaceName,
-            Image         = config.Get("orderApi:image") ?? "localhost/ecommerce/order-api:dev",
-            OrderDbHost   = dbResources.OrderDbServiceName,
-            RabbitMqHost  = mqResources.RabbitMqServiceName
+            Namespace    = namespaceName,
+            Image        = orderApiCfg.Get("image") ?? "localhost/ecommerce/order-api:dev",
+            OrderDbHost  = dbResources.OrderDbServiceName,
+            RabbitMqHost = mqResources.RabbitMqServiceName,
+            Replicas     = replicasCfg.GetInt32("orderApi") ?? 1
         });
 
         var inventoryApi = new InventoryServiceResources("inventory-service", new InventoryServiceResourcesArgs
         {
-            Namespace            = namespaceName,
-            Image                = config.Get("inventoryApi:image") ?? "localhost/ecommerce/inventory-api:dev",
-            InventoryDbHost      = dbResources.InventoryDbServiceName,
-            RabbitMqHost         = mqResources.RabbitMqServiceName,
-            ReservationTtlMinutes = config.GetInt32("reservation:ttlMinutes") ?? 10,
-            CheckIntervalSeconds  = config.GetInt32("reservation:checkIntervalSeconds") ?? 30
+            Namespace             = namespaceName,
+            Image                 = inventoryApiCfg.Get("image") ?? "localhost/ecommerce/inventory-api:dev",
+            InventoryDbHost       = dbResources.InventoryDbServiceName,
+            RabbitMqHost          = mqResources.RabbitMqServiceName,
+            ReservationTtlMinutes = reservationCfg.GetInt32("ttlMinutes") ?? 10,
+            CheckIntervalSeconds  = reservationCfg.GetInt32("checkIntervalSeconds") ?? 30,
+            Replicas              = replicasCfg.GetInt32("inventoryApi") ?? 1
         });
 
         var gateway = new GatewayResources("gateway", new GatewayResourcesArgs
         {
-            Namespace      = namespaceName,
-            Image          = config.Get("gateway:image") ?? "localhost/ecommerce/gateway:dev",
-            NodePort       = config.GetInt32("gateway:nodePort") ?? 30080,
-            OrderApiHost   = orderApi.ServiceName,
-            InventoryApiHost = inventoryApi.ServiceName
+            Namespace        = namespaceName,
+            Image            = gatewayCfg.Get("image") ?? "localhost/ecommerce/gateway:dev",
+            NodePort         = nodePort,
+            OrderApiHost     = orderApi.ServiceName,
+            InventoryApiHost = inventoryApi.ServiceName,
+            Replicas         = replicasCfg.GetInt32("gateway") ?? 1
         });
 
         // ── Outputs ───────────────────────────────────────────────────────────
-        GatewayUrl = Output.Create($"http://localhost:{config.GetInt32("gateway:nodePort") ?? 30080}");
-        OrderApiHealthUrl    = Output.Format($"http://localhost:{config.GetInt32("gateway:nodePort") ?? 30080}/health/orders");
-        InventoryApiHealthUrl = Output.Format($"http://localhost:{config.GetInt32("gateway:nodePort") ?? 30080}/health/inventory");
+        GatewayUrl            = Output.Create($"http://localhost:{nodePort}");
+        OrderApiHealthUrl     = Output.Create($"http://localhost:{nodePort}/health/orders");
+        InventoryApiHealthUrl = Output.Create($"http://localhost:{nodePort}/health/inventory");
     }
 
     [Output] public Output<string> GatewayUrl { get; set; }

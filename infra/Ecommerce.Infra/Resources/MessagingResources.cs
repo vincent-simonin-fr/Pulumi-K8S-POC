@@ -10,6 +10,8 @@ namespace Ecommerce.Infra.Resources;
 public class MessagingResourcesArgs
 {
     public Input<string> Namespace { get; set; } = "ecommerce";
+    /// <remarks>⚠️ Garder à 1 en dev — RabbitMQ nécessite un cluster quorum pour être scalé.</remarks>
+    public int Replicas { get; set; } = 1;
 }
 
 public class MessagingResources : ComponentResource
@@ -26,7 +28,7 @@ public class MessagingResources : ComponentResource
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "rabbitmq" },
             Spec = new DeploymentSpecArgs
             {
-                Replicas = 1,
+                Replicas = args.Replicas,
                 Selector = new LabelSelectorArgs
                 {
                     MatchLabels = new InputMap<string> { ["app"] = "rabbitmq" }
