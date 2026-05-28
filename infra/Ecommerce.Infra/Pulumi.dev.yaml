@@ -13,10 +13,51 @@ config:
   reservation:ttlMinutes: "10"
   reservation:checkIntervalSeconds: "30"
 
-  # Nombre de réplicas
+  # Nombre de réplicas fixes (ignoré si HPA activé)
   # ⚠️ db et rabbitmq : garder à 1 sans réplication configurée
   replicas:orderApi: "1"
   replicas:inventoryApi: "1"
   replicas:gateway: "1"
   replicas:db: "1"
   replicas:rabbitmq: "1"
+
+  # Resources CPU/mémoire par container
+  # request = garanti par le scheduler   |  limit = plafond (OOMKill si dépassé)
+  # Format CPU : "100m" = 0.1 core       |  Format mémoire : "128Mi"
+  resources:orderApiCpuRequest: "100m"
+  resources:orderApiCpuLimit: "500m"
+  resources:orderApiMemoryRequest: "128Mi"
+  resources:orderApiMemoryLimit: "256Mi"
+
+  resources:inventoryApiCpuRequest: "100m"
+  resources:inventoryApiCpuLimit: "500m"
+  resources:inventoryApiMemoryRequest: "128Mi"
+  resources:inventoryApiMemoryLimit: "256Mi"
+
+  resources:gatewayCpuRequest: "50m"
+  resources:gatewayCpuLimit: "250m"
+  resources:gatewayMemoryRequest: "64Mi"
+  resources:gatewayMemoryLimit: "128Mi"
+
+  # HPA — HorizontalPodAutoscaler
+  # ⚠️ Requiert que le Metrics Server soit installé dans le cluster :
+  #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  #   kubectl patch deployment metrics-server -n kube-system --type='json' \
+  #     -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  hpa:orderApiEnabled: "true"
+  hpa:orderApiMin: "1"
+  hpa:orderApiMax: "4"
+  hpa:orderApiCpu: "70"
+  # hpa:orderApiMemory: "80"   # optionnel — décommenter pour scaler sur la mémoire aussi
+
+  hpa:inventoryApiEnabled: "true"
+  hpa:inventoryApiMin: "1"
+  hpa:inventoryApiMax: "4"
+  hpa:inventoryApiCpu: "70"
+  # hpa:inventoryApiMemory: "80"
+
+  hpa:gatewayEnabled: "true"
+  hpa:gatewayMin: "1"
+  hpa:gatewayMax: "3"
+  hpa:gatewayCpu: "70"
+  # hpa:gatewayMemory: "80"

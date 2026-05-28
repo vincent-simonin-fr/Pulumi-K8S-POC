@@ -56,6 +56,25 @@ Architecture microservices e-commerce de démonstration en **Clean Architecture*
 
 ---
 
+## Installation Metrics Server (Kubernetes) pour HPA
+
+```bash
+# Installer
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Kind utilise des certificats auto-signés → patch obligatoire
+kubectl patch deployment metrics-server -n kube-system --type=json -p "[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--kubelet-insecure-tls\"}]"
+
+# Vérifier (attendre ~30s)
+kubectl get deployment metrics-server -n kube-system
+
+# En cas de problème
+podman pull registry.k8s.io/metrics-server/metrics-server:v0.8.1
+kind load docker-image registry.k8s.io/metrics-server/metrics-server:v0.8.1 --name ecommerce
+
+kubectl rollout restart deployment metrics-server -n kube-system
+```
+
 ## Démarrage rapide — Dev local (podman-compose)
 
 ```bash

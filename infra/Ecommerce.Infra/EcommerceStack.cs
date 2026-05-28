@@ -16,6 +16,8 @@ public class EcommerceStack : Stack
         var gatewayCfg      = new Config("gateway");
         var reservationCfg  = new Config("reservation");
         var replicasCfg     = new Config("replicas");
+        var hpaCfg          = new Config("hpa");
+        var resourcesCfg    = new Config("resources");
 
         var nodePort = gatewayCfg.GetInt32("nodePort") ?? 30080;
 
@@ -43,11 +45,23 @@ public class EcommerceStack : Stack
         // ── Services applicatifs ──────────────────────────────────────────────
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
         {
-            Namespace    = namespaceName,
-            Image        = orderApiCfg.Get("image") ?? "localhost/ecommerce/order-api:dev",
-            OrderDbHost  = dbResources.OrderDbServiceName,
-            RabbitMqHost = mqResources.RabbitMqServiceName,
-            Replicas     = replicasCfg.GetInt32("orderApi") ?? 1
+            Namespace      = namespaceName,
+            Image          = orderApiCfg.Get("image") ?? "localhost/ecommerce/order-api:dev",
+            OrderDbHost    = dbResources.OrderDbServiceName,
+            RabbitMqHost   = mqResources.RabbitMqServiceName,
+            Replicas       = replicasCfg.GetInt32("orderApi") ?? 1,
+            CpuRequest     = resourcesCfg.Get("orderApiCpuRequest")    ?? "100m",
+            CpuLimit       = resourcesCfg.Get("orderApiCpuLimit")      ?? "500m",
+            MemoryRequest  = resourcesCfg.Get("orderApiMemoryRequest") ?? "128Mi",
+            MemoryLimit    = resourcesCfg.Get("orderApiMemoryLimit")   ?? "256Mi",
+            Hpa = new HpaArgs
+            {
+                Enabled       = hpaCfg.GetBoolean("orderApiEnabled") ?? false,
+                MinReplicas   = hpaCfg.GetInt32("orderApiMin") ?? 1,
+                MaxReplicas   = hpaCfg.GetInt32("orderApiMax") ?? 4,
+                CpuPercent    = hpaCfg.GetInt32("orderApiCpu") ?? 70,
+                MemoryPercent = hpaCfg.GetInt32("orderApiMemory")
+            }
         });
 
         var inventoryApi = new InventoryServiceResources("inventory-service", new InventoryServiceResourcesArgs
@@ -58,7 +72,19 @@ public class EcommerceStack : Stack
             RabbitMqHost          = mqResources.RabbitMqServiceName,
             ReservationTtlMinutes = reservationCfg.GetInt32("ttlMinutes") ?? 10,
             CheckIntervalSeconds  = reservationCfg.GetInt32("checkIntervalSeconds") ?? 30,
-            Replicas              = replicasCfg.GetInt32("inventoryApi") ?? 1
+            Replicas              = replicasCfg.GetInt32("inventoryApi") ?? 1,
+            CpuRequest            = resourcesCfg.Get("inventoryApiCpuRequest")    ?? "100m",
+            CpuLimit              = resourcesCfg.Get("inventoryApiCpuLimit")      ?? "500m",
+            MemoryRequest         = resourcesCfg.Get("inventoryApiMemoryRequest") ?? "128Mi",
+            MemoryLimit           = resourcesCfg.Get("inventoryApiMemoryLimit")   ?? "256Mi",
+            Hpa = new HpaArgs
+            {
+                Enabled       = hpaCfg.GetBoolean("inventoryApiEnabled") ?? false,
+                MinReplicas   = hpaCfg.GetInt32("inventoryApiMin") ?? 1,
+                MaxReplicas   = hpaCfg.GetInt32("inventoryApiMax") ?? 4,
+                CpuPercent    = hpaCfg.GetInt32("inventoryApiCpu") ?? 70,
+                MemoryPercent = hpaCfg.GetInt32("inventoryApiMemory")
+            }
         });
 
         var gateway = new GatewayResources("gateway", new GatewayResourcesArgs
@@ -68,7 +94,19 @@ public class EcommerceStack : Stack
             NodePort         = nodePort,
             OrderApiHost     = orderApi.ServiceName,
             InventoryApiHost = inventoryApi.ServiceName,
-            Replicas         = replicasCfg.GetInt32("gateway") ?? 1
+            Replicas         = replicasCfg.GetInt32("gateway") ?? 1,
+            CpuRequest       = resourcesCfg.Get("gatewayCpuRequest")    ?? "50m",
+            CpuLimit         = resourcesCfg.Get("gatewayCpuLimit")      ?? "250m",
+            MemoryRequest    = resourcesCfg.Get("gatewayMemoryRequest") ?? "64Mi",
+            MemoryLimit      = resourcesCfg.Get("gatewayMemoryLimit")   ?? "128Mi",
+            Hpa = new HpaArgs
+            {
+                Enabled       = hpaCfg.GetBoolean("gatewayEnabled") ?? false,
+                MinReplicas   = hpaCfg.GetInt32("gatewayMin") ?? 1,
+                MaxReplicas   = hpaCfg.GetInt32("gatewayMax") ?? 3,
+                CpuPercent    = hpaCfg.GetInt32("gatewayCpu") ?? 70,
+                MemoryPercent = hpaCfg.GetInt32("gatewayMemory")
+            }
         });
 
         // ── Outputs ───────────────────────────────────────────────────────────
