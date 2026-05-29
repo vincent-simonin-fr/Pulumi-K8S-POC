@@ -23,6 +23,7 @@ public class EcommerceStack : Stack
         var ingressCfg      = new Config("ingress");
         var presaleCfg      = new Config("presale");
         var kedaCfg         = new Config("keda");
+        var cnpgCfg         = new Config("cnpg");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -37,13 +38,19 @@ public class EcommerceStack : Stack
         // Désactivation : pulumi config set presale:enabled false && pulumi up --yes
         var presaleEnabled = presaleCfg.GetBoolean("enabled") ?? false;
 
-        // Retourne le minReplicas effectif : presale si activé, config HPA/KEDA sinon.
-        // Pour inventory-api : la valeur est passée au ScaledObject KEDA (minReplicaCount).
-        // Pour order-api/gateway : la valeur est passée à l'HPA natif (minReplicas).
-        int PresaleMin(string hpaKey, string presaleKey, int fallback = 1) =>
+        // Retourne le minReplicas effectif pour order-api et gateway (HPA natif).
+        // Quand presale est actif, force la valeur presale pour pré-chauffer les pods.
+        int HpaMin(string key, int fallback = 1) =>
             presaleEnabled
-                ? (presaleCfg.GetInt32(presaleKey) ?? fallback)
-                : (hpaCfg.GetInt32(hpaKey) ?? 1);
+                ? (presaleCfg.GetInt32(key) ?? fallback)
+                : (hpaCfg.GetInt32(key) ?? 1);
+
+        // Retourne le minReplicaCount effectif pour inventory-api (ScaledObject KEDA).
+        // La valeur nominale vient de keda:inventoryApiMin (section KEDA, pas HPA).
+        int KedaMin(int fallback = 1) =>
+            presaleEnabled
+                ? (presaleCfg.GetInt32("inventoryApiMin") ?? fallback)
+                : (kedaCfg.GetInt32("inventoryApiMin") ?? 1);
 
         // ── Observabilité (namespace monitoring — indépendant de ecommerce) ───
         var observability = new ObservabilityResources("observability", new ObservabilityResourcesArgs
@@ -80,17 +87,41 @@ public class EcommerceStack : Stack
             InventoryDbPassword = secretsCfg.Get("inventoryDbPassword") ?? "postgres",
             InventoryDbName     = secretsCfg.Get("inventoryDbName")     ?? "inventory_db",
             RabbitMqUser        = secretsCfg.Get("rabbitmqUser")        ?? "guest",
-            RabbitMqPassword    = secretsCfg.Get("rabbitmqPassword")    ?? "guest"
+            RabbitMqPassword    = secretsCfg.Get("rabbitmqPassword")    ?? "guest",
+            // Connection strings pointent vers les Poolers PgBouncer (pas directement vers CNPG -rw).
+            // Les init containers utilisent -rw séparément (voir OrderServiceResources + InventoryServiceResources).
+            OrderDbHost         = "order-db-pooler",
+            InventoryDbHost     = "inventory-db-pooler"
         });
 
         var secretsDep = new ComponentResourceOptions { DependsOn = { secretsResources } };
 
-        // ── Infrastructure (PostgreSQL + RabbitMQ + Redis) ────────────────────
+        // ── CNPG Operator (avant les bases de données) ────────────────────────
+        // Installe cloudnative-pg via Helm (namespace cnpg-system, WaitForJobs=true).
+        // DatabaseResources dépend de CnpgResources pour que les CRDs (Cluster, Pooler)
+        // soient enregistrées dans l'API K8s avant que kubectl apply ne les utilise.
+        // Voir CnpgResources.cs pour le détail du workaround GVK cache.
+        var cnpgResources = new CnpgResources("cnpg", new CnpgResourcesArgs
+        {
+            Version = cnpgCfg.Get("version") ?? "0.22.0"
+        });
+
+        // DependsOn combiné : secrets (pour postgres_exporter) + CNPG (pour CRDs).
+        var cnpgSecretsDep = new ComponentResourceOptions
+        {
+            DependsOn = { secretsResources, cnpgResources }
+        };
+
+        // ── Infrastructure (PostgreSQL CNPG + RabbitMQ + Redis) ──────────────
         var dbResources = new DatabaseResources("databases", new DatabaseResourcesArgs
         {
-            Namespace = namespaceName,
-            Replicas  = replicasCfg.GetInt32("db") ?? 1
-        }, secretsDep);
+            Namespace           = namespaceName,
+            OrderDbPassword     = secretsCfg.Get("orderDbPassword")     ?? "postgres",
+            InventoryDbPassword = secretsCfg.Get("inventoryDbPassword") ?? "postgres",
+            OrderInstances      = cnpgCfg.GetInt32("orderInstances")     ?? 1,
+            InventoryInstances  = cnpgCfg.GetInt32("inventoryInstances") ?? 1,
+            PoolerInstances     = cnpgCfg.GetInt32("poolerInstances")    ?? 1,
+        }, cnpgSecretsDep);
 
         var mqResources = new MessagingResources("messaging", new MessagingResourcesArgs
         {
@@ -122,10 +153,11 @@ public class EcommerceStack : Stack
             RabbitMqPassword= secretsCfg.Get("rabbitmqPassword") ?? "guest",
             QueueName       = kedaCfg.Get("queueName")           ?? "product-added-to-cart",
             QueueLength     = kedaCfg.GetInt32("queueLength")    ?? 5,
-            MinReplicas     = PresaleMin("inventoryApiMin", "inventoryApiMin", 3),
+            MinReplicas     = KedaMin(fallback: 3),
             MaxReplicas     = kedaCfg.GetInt32("inventoryApiMax") ?? 8,
             PollingInterval = kedaCfg.GetInt32("pollingInterval") ?? 5,
             CooldownPeriod  = kedaCfg.GetInt32("cooldownPeriod")  ?? 60,
+            ScaleDownWindow = kedaCfg.GetInt32("scaleDownWindow") ?? 240,
             KedaVersion     = kedaCfg.Get("version")              ?? "2.17.0"
         });
 
@@ -134,7 +166,9 @@ public class EcommerceStack : Stack
         {
             Namespace      = namespaceName,
             Image          = orderApiCfg.Get("image") ?? "localhost/ecommerce/order-api:dev",
-            OrderDbHost    = dbResources.OrderDbServiceName,
+            // Init container : attend que le primary CNPG soit Ready (service -rw créé par CNPG).
+            // La connection string ASP.NET Core passe par le Pooler (secrets → order-db-pooler).
+            OrderDbHost    = dbResources.OrderDbRwServiceName,
             RabbitMqHost   = mqResources.RabbitMqServiceName,
             OtelEndpoint   = observability.OtelCollectorEndpoint,
             Replicas       = replicasCfg.GetInt32("orderApi") ?? 1,
@@ -145,7 +179,7 @@ public class EcommerceStack : Stack
             Hpa = new HpaArgs
             {
                 Enabled       = hpaCfg.GetBoolean("orderApiEnabled") ?? false,
-                MinReplicas   = PresaleMin("orderApiMin", "orderApiMin", 3),
+                MinReplicas   = HpaMin("orderApiMin", fallback: 3),
                 MaxReplicas   = hpaCfg.GetInt32("orderApiMax") ?? 4,
                 CpuPercent    = hpaCfg.GetInt32("orderApiCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("orderApiMemory")
@@ -156,7 +190,8 @@ public class EcommerceStack : Stack
         {
             Namespace             = namespaceName,
             Image                 = inventoryApiCfg.Get("image") ?? "localhost/ecommerce/inventory-api:dev",
-            InventoryDbHost       = dbResources.InventoryDbServiceName,
+            // Init container : attend que le primary CNPG soit Ready (service -rw créé par CNPG).
+            InventoryDbHost       = dbResources.InventoryDbRwServiceName,
             RabbitMqHost          = mqResources.RabbitMqServiceName,
             OtelEndpoint          = observability.OtelCollectorEndpoint,
             RedisConnectionString = cacheResources.RedisConnectionString,
@@ -187,7 +222,7 @@ public class EcommerceStack : Stack
             Hpa = new HpaArgs
             {
                 Enabled       = hpaCfg.GetBoolean("gatewayEnabled") ?? false,
-                MinReplicas   = PresaleMin("gatewayMin", "gatewayMin", 2),
+                MinReplicas   = HpaMin("gatewayMin", fallback: 2),
                 MaxReplicas   = hpaCfg.GetInt32("gatewayMax") ?? 3,
                 CpuPercent    = hpaCfg.GetInt32("gatewayCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("gatewayMemory")

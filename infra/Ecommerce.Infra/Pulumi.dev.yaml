@@ -14,11 +14,11 @@ config:
   reservation:checkIntervalSeconds: "30"
 
   # Nombre de réplicas fixes (ignoré si HPA activé)
-  # ⚠️ db et rabbitmq : garder à 1 sans réplication configurée
+  # ⚠️ rabbitmq : garder à 1 sans réplication configurée
+  # ⚠️ db : obsolète (remplacé par cnpg:orderInstances / cnpg:inventoryInstances)
   replicas:orderApi: "1"
   replicas:inventoryApi: "1"
   replicas:gateway: "1"
-  replicas:db: "1"
   replicas:rabbitmq: "1"
 
   # Resources CPU/mémoire par container
@@ -49,9 +49,9 @@ config:
   #
   # Ces commandes chiffrent la valeur dans ce fichier (format "secure: <encrypted>").
   # Les clés non sensibles (user, name) peuvent rester en clair.
-  secrets:orderDbUser: postgres
+  secrets:orderDbUser: app        # user 'app' = owner CNPG (pas postgres superuser)
   secrets:orderDbName: order_db
-  secrets:inventoryDbUser: postgres
+  secrets:inventoryDbUser: app    # user 'app' = owner CNPG (pas postgres superuser)
   secrets:inventoryDbName: inventory_db
   secrets:rabbitmqUser: guest
   # ⚠️ Ne pas commiter les mots de passe en clair — utiliser --secret (voir ci-dessus)
@@ -88,25 +88,42 @@ config:
   presale:gatewayMin: "2"        # pods gateway en attente du pic
 
   # HPA — HorizontalPodAutoscaler (order-api + gateway uniquement)
-  # ⚠️ inventory-api n'utilise plus l'HPA natif — KEDA gère son scaling (voir section keda ci-dessous).
-  # ⚠️ Requiert que le Metrics Server soit installé dans le cluster :
+  # inventory-api est géré par KEDA (voir section keda ci-dessous) — pas de HPA natif.
+  # Requiert le Metrics Server dans le cluster :
   #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-  #   kubectl patch deployment metrics-server -n kube-system --type='json' \
+  #   kubectl patch deployment metrics-server -n kube-system --type=json \
   #     -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
   hpa:orderApiEnabled: "true"
   hpa:orderApiMin: "1"
   hpa:orderApiMax: "4"
   hpa:orderApiCpu: "70"
-  # hpa:orderApiMemory: "80"   # optionnel — décommenter pour scaler sur la mémoire aussi
-
-  # hpa:inventoryApiEnabled / inventoryApiMin / inventoryApiMax : ignorés (KEDA gère inventory-api)
-  hpa:inventoryApiMin: "1"   # utilisé par PresaleMin() comme valeur nominale
 
   hpa:gatewayEnabled: "true"
   hpa:gatewayMin: "1"
   hpa:gatewayMax: "3"
   hpa:gatewayCpu: "70"
-  # hpa:gatewayMemory: "80"
+
+  # ── CNPG — CloudNativePG Operator + Clusters + Poolers ────────────────
+  # CNPG remplace les StatefulSets PostgreSQL par des clusters gérés.
+  # Chaque cluster dispose d'un Pooler PgBouncer (session mode) devant lui.
+  #
+  # Dev (Kind mono-nœud) : 1 instance par cluster, 1 pooler.
+  # Prod recommandé : 3 instances (1 primary + 2 replicas), 2 poolers.
+  #
+  # Services créés automatiquement par CNPG :
+  #   {cluster}-rw     → primary (init containers + postgres_exporter)
+  #   {cluster}-ro     → replicas (lectures optionnelles)
+  #   {cluster}-pooler → PgBouncer (connection strings ASP.NET Core)
+  #
+  # cnpg:version = VERSION DU CHART HELM (pas de l'opérateur).
+  # Correspondance chart => opérateur :
+  #   0.22.0 => opérateur 1.24.0  (image: ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0)
+  #   0.23.x => opérateur 1.25.x
+  #   0.28.x => opérateur 1.29.x  (latest)
+  cnpg:version: "0.22.0"
+  cnpg:orderInstances: "1"        # pods postgres order-db   (dev=1, prod=3)
+  cnpg:inventoryInstances: "1"    # pods postgres inventory-db
+  cnpg:poolerInstances: "1"       # pods PgBouncer par cluster (dev=1, prod=2)
 
   # ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ─────────
   # KEDA scale inventory-api sur la profondeur de la queue RabbitMQ.
@@ -123,6 +140,8 @@ config:
   keda:version: "2.17.0"
   keda:queueName: "product-added-to-cart"
   keda:queueLength: "5"          # messages par réplica → scale-out si queue > N*replicas
-  keda:inventoryApiMax: "4"      # plafond Kind mono-nœud (8×pool=800 dépasse max_connections=100 PG)
+  keda:inventoryApiMin: "1"      # minReplicaCount du ScaledObject (aussi utilisé par presale:inventoryApiMin)
+  keda:inventoryApiMax: "8"      # 8×25 pool = 200 = max_connections CNPG (prod : préférer 6-7 pour laisser marge)
   keda:pollingInterval: "5"      # secondes entre chaque lecture de la queue
-  keda:cooldownPeriod: "60"      # secondes d'inactivité avant scale-in
+  keda:cooldownPeriod: "60"      # secondes d'inactivité avant que KEDA demande le scale-in au HPA
+  keda:scaleDownWindow: "240"    # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)

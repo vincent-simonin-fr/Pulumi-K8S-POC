@@ -6,6 +6,7 @@
 - [Structure](#structure)
 - [Lancer un scénario](#lancer-un-scénario)
 - [Scénarios disponibles](#scénarios-disponibles)
+- [Observer en temps réel pendant le spike](#observer-en-temps-réel-pendant-le-spike)
 - [Intégration Prometheus → Grafana](#intégration-prometheus--grafana)
 - [Ce qu'observer dans Grafana](#ce-quobserver-dans-grafana)
 
@@ -123,6 +124,46 @@ scripts\presale.cmd start   # pré-scale avant le pic → pods déjà chauds
 k6 run tests/Ecommerce.LoadTests/scenarios/spike.js
 scripts\presale.cmd stop    # retour au dimensionnement nominal
 ```
+
+---
+
+## Observer en temps réel pendant le spike
+
+Ouvrir **4 terminaux** en parallèle avant de lancer k6.
+
+### Terminal 1 — Lancer le spike
+
+```bash
+k6 run tests/Ecommerce.LoadTests/scenarios/spike.js
+```
+
+### Terminal 2 — Pods inventory-api (scale-out / scale-in)
+
+```bash
+kubectl get pods -n ecommerce -l app=inventory-api -w
+```
+
+Déroulé attendu : 1 pod → 8 pods en ~35 s pendant le pic → retour à 1 pod ~5 min après la fin.
+
+### Terminal 3 — HPA interne KEDA
+
+```bash
+kubectl get hpa -n ecommerce -w
+```
+
+La colonne `TARGETS` affiche `<messages>/<seuil>` (ex. `35/5` → KEDA va scaler à `ceil(35/5)` = 7 pods).  
+`REPLICAS` suit en temps réel l'effet du scale-out.
+
+### Terminal 4 — Profondeur de la queue RabbitMQ
+
+```bash
+# Profondeur en direct (toutes les 2 s) — via rabbitmqctl dans le pod
+kubectl exec -n ecommerce deploy/rabbitmq -- watch -n 2 \
+  "rabbitmqctl list_queues name messages consumers --formatter=pretty_table 2>/dev/null"
+```
+
+> **RabbitMQ Management UI** : `http://localhost:15672` → onglet **Queues** → `product-added-to-cart`  
+> affiche les graphes de profondeur et de débit en temps réel sans commande supplémentaire.
 
 ---
 

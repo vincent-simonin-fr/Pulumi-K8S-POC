@@ -21,9 +21,11 @@ public class SecretsResourcesArgs
     public string RabbitMqUser     { get; set; } = "guest";
     public string RabbitMqPassword { get; set; } = "guest";
 
-    // DNS interne K8s — utilisés pour construire les connection strings
-    public string OrderDbHost     { get; set; } = "order-db";
-    public string InventoryDbHost { get; set; } = "inventory-db";
+    // DNS interne K8s — pointent vers les Poolers PgBouncer (et non directement vers CNPG -rw).
+    // Les init containers utilisent {cluster}-rw pour leur health check (passé séparément
+    // via ServiceResourcesArgs.OrderDbHost / InventoryDbHost dans EcommerceStack).
+    public string OrderDbHost     { get; set; } = "order-db-pooler";
+    public string InventoryDbHost { get; set; } = "inventory-db-pooler";
 }
 
 /// <summary>
@@ -61,18 +63,25 @@ public class SecretsResources : ComponentResource
             Metadata   = new ObjectMetaArgs { Namespace = args.Namespace, Name = OrderDbSecretName },
             StringData = new InputMap<string>
             {
-                // Pod PostgreSQL
-                ["POSTGRES_USER"]              = args.OrderDbUser,
-                ["POSTGRES_PASSWORD"]          = args.OrderDbPassword,
-                ["POSTGRES_DB"]                = args.OrderDbName,
+                // User 'app' = owner de la base, créé par CNPG lors de l'initdb.
+                // Son mot de passe est défini via postInitSQL : "ALTER USER app PASSWORD '<pwd>'".
+                // ⚠️  Sur un cluster existant, synchroniser manuellement si le mot de passe change :
+                //      kubectl exec -n ecommerce order-db-1 -- psql -U postgres -d order_db \
+                //        -c "ALTER USER app PASSWORD '<nouveau-mot-de-passe>'"
+                ["POSTGRES_USER"]     = args.OrderDbUser,     // "app" (CNPG owner)
+                ["POSTGRES_PASSWORD"] = args.OrderDbPassword,
+                ["POSTGRES_DB"]       = args.OrderDbName,
                 // order-api — ASP.NET Core ConnectionStrings__OrderDb
-                // Maximum Pool Size : limite le pool Npgsql par pod (défaut = 100 — trop élevé
-                // quand plusieurs réplicas tournent en parallèle sur un cluster Kind mono-nœud).
-                // 10 connexions/pod × 4 pods max = 40 → large marge sous max_connections=100 de PG.
+                // Host = order-db-pooler : passe par PgBouncer (session mode).
+                // Maximum Pool Size=25 (Npgsql, par pod) + default_pool_size=200 (PgBouncer) :
+                // en session mode chaque connexion Npgsql = 1 connexion PG ; PgBouncer doit
+                // absorber jusqu'à 8 pods × 25 = 200 connexions → default_pool_size=200
+                // (égal à max_connections CNPG). Minimum Pool Size=0 : pas de connexions
+                // en veille (économie de ressources en dev).
                 ["ConnectionStrings__OrderDb"] =
                     $"Host={args.OrderDbHost};Port=5432;Database={args.OrderDbName};" +
                     $"Username={args.OrderDbUser};Password={args.OrderDbPassword};" +
-                    $"Maximum Pool Size=10;Minimum Pool Size=0"
+                    $"Maximum Pool Size=25;Minimum Pool Size=0"
             }
         }, resourceOpts);
 
@@ -82,18 +91,18 @@ public class SecretsResources : ComponentResource
             Metadata   = new ObjectMetaArgs { Namespace = args.Namespace, Name = InventoryDbSecretName },
             StringData = new InputMap<string>
             {
-                // Pod PostgreSQL
-                ["POSTGRES_USER"]                   = args.InventoryDbUser,
-                ["POSTGRES_PASSWORD"]               = args.InventoryDbPassword,
-                ["POSTGRES_DB"]                     = args.InventoryDbName,
+                // User 'app' = owner de la base inventory-db (identique à order-db).
+                // Voir commentaire order-db ci-dessus pour la procédure de synchronisation.
+                ["POSTGRES_USER"]     = args.InventoryDbUser,  // "app" (CNPG owner)
+                ["POSTGRES_PASSWORD"] = args.InventoryDbPassword,
+                ["POSTGRES_DB"]       = args.InventoryDbName,
                 // inventory-api — ASP.NET Core ConnectionStrings__InventoryDb
-                // Maximum Pool Size : voir commentaire order-api ci-dessus.
-                // inventory-api peut avoir jusqu'à keda:inventoryApiMax réplicas (4 en dev Kind).
-                // 4 pods × 10 connexions = 40 connexions → sous max_connections=100 de PG.
+                // inventory-api scale jusqu'à keda:inventoryApiMax réplicas (8 en dev) via KEDA.
+                // 8×25 = 200 connexions max = max_connections CNPG.
                 ["ConnectionStrings__InventoryDb"]  =
                     $"Host={args.InventoryDbHost};Port=5432;Database={args.InventoryDbName};" +
                     $"Username={args.InventoryDbUser};Password={args.InventoryDbPassword};" +
-                    $"Maximum Pool Size=10;Minimum Pool Size=0"
+                    $"Maximum Pool Size=25;Minimum Pool Size=0"
             }
         }, resourceOpts);
 

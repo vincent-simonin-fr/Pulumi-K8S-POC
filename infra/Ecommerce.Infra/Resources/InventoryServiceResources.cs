@@ -80,17 +80,18 @@ public class InventoryServiceResources : ComponentResource
                             },
                             // bash est disponible dans postgres:16-alpine (utilisé par l'entrypoint officiel).
                             // /dev/tcp est un built-in bash — pas besoin de nc ou curl.
-                            // 1) Attend que inventory-db existe ET que l'auth fonctionne (psql SELECT 1)
+                            // 1) Attend que le primary CNPG inventory-db-rw soit prêt (psql SELECT 1)
+                            //    args.InventoryDbHost = "inventory-db-rw" (service -rw créé par CNPG)
                             // 2) Attend que le port AMQP 5672 de RabbitMQ réponde (TCP)
-                            Command = new[]
+                            Command = args.InventoryDbHost.Apply(dbHost => (IEnumerable<string>) new[]
                             {
                                 "/bin/bash", "-c",
-                                "echo 'Waiting for inventory-db...' && " +
-                                "until PGPASSWORD=$POSTGRES_PASSWORD psql -h inventory-db -U $POSTGRES_USER -d $POSTGRES_DB -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done && " +
-                                "echo 'inventory-db ready. Waiting for RabbitMQ...' && " +
+                                $"echo 'Waiting for {dbHost}...' && " +
+                                $"until PGPASSWORD=$POSTGRES_PASSWORD psql -h {dbHost} -U $POSTGRES_USER -d $POSTGRES_DB -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done && " +
+                                $"echo '{dbHost} ready. Waiting for RabbitMQ...' && " +
                                 "until (echo > /dev/tcp/rabbitmq/5672) 2>/dev/null; do sleep 2; done && " +
                                 "echo 'All dependencies ready.'"
-                            }
+                            })
                         },
                         Containers = new ContainerArgs
                         {

@@ -12,3 +12,12 @@ scrape_configs:
   - job_name: postgres-inventory
     static_configs:
       - targets: ['postgres-exporter-inventory:9187']
+  # ── CNPG — non applicable en docker-compose ──────────────────────────────
+  # Les métriques CNPG (cnpg_pg_stat_database_*, cnpg_backends_*, etc.) sont
+  # exposées par les pods PostgreSQL gérés par l'opérateur CloudNativePG.
+  # CNPG ne tourne que dans Kubernetes. En compose, postgres-exporter couvre
+  # les métriques PG via pg_stat_database / pg_stat_activity.
+  # Targets K8s (configurés dans ObservabilityResources.cs) :
+  #   cnpg-order     → order-db-rw.ecommerce.svc.cluster.local:9187
+  #   cnpg-inventory → inventory-db-rw.ecommerce.svc.cluster.local:9187
+  #   cnpg-operator  → cnpg-controller-manager-metrics-service.cnpg-system.svc.cluster.local:8080

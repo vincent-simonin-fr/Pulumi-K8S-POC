@@ -295,6 +295,28 @@ scrape_configs:
   - job_name: node-exporter
     static_configs:
       - targets: ['node-exporter.monitoring.svc.cluster.local:9100']
+  # ── CNPG — métriques built-in dans chaque pod postgres (port 9187) ──────
+  # DatabaseResources crée {cluster}-metrics (ClusterIP) avec selector cnpg.io/cluster.
+  # Ces services sont distincts des services -rw/-ro créés par CNPG (port 5432 seulement).
+  #
+  # metric_relabel_configs : propage le label 'cluster' sur TOUTES les métriques.
+  # Sans ça, seules les cnpg_collector_* ont le label cluster (posé par l'exporter).
+  # Les cnpg_backends_*, cnpg_pg_stat_database_*, cnpg_pg_replication_*
+  # n'ont que job/instance — le dashboard ne peut pas filtrer par cluster sans ce relabel.
+  - job_name: cnpg-order
+    static_configs:
+      - targets: ['order-db-metrics.ecommerce.svc.cluster.local:9187']
+    metric_relabel_configs:
+      - target_label: cluster
+        replacement: order-db
+  - job_name: cnpg-inventory
+    static_configs:
+      - targets: ['inventory-db-metrics.ecommerce.svc.cluster.local:9187']
+    metric_relabel_configs:
+      - target_label: cluster
+        replacement: inventory-db
+  # Note : le chart CNPG 0.22.0 n'expose pas de service de métriques pour l'opérateur.
+  # cnpg-controller-manager-metrics-service n'existe pas dans cnpg-system.
 "
             }
         }, nsDep);
@@ -414,7 +436,8 @@ datasources:
                 ["services.json"]   = File.ReadAllText("../../docker/observability/dashboards/services.json"),
                 ["database.json"]   = File.ReadAllText("../../docker/observability/dashboards/database.json"),
                 ["runtime.json"]    = File.ReadAllText("../../docker/observability/dashboards/runtime.json"),
-                ["kubernetes.json"] = File.ReadAllText("../../docker/observability/dashboards/kubernetes.json")
+                ["kubernetes.json"] = File.ReadAllText("../../docker/observability/dashboards/kubernetes.json"),
+                ["cnpg.json"]       = File.ReadAllText("../../docker/observability/dashboards/cnpg.json")
             }
         }, nsDep);
 

@@ -5,7 +5,7 @@
 - [Structure du code](#structure-du-code)
 - [Configuration — Pulumi.dev.yaml](#configuration--pulumidevyaml)
 - [Secrets K8s](#secrets-k8s)
-- [Bases de données — StatefulSet](#bases-de-données--statefulset)
+- [Bases de données — CNPG Cluster + Pooler](#bases-de-données--cnpg-cluster--pooler)
 - [Cache Redis](#cache-redis)
 - [HPA — HorizontalPodAutoscaler](#hpa--horizontalpodautoscaler)
 - [KEDA — Scaling réactif (inventory-api)](#keda--scaling-réactif-inventory-api)
@@ -25,7 +25,8 @@ infra/Ecommerce.Infra/
 └── Resources/
     ├── HpaArgs.cs                 # DTO partagé pour la config HPA
     ├── SecretsResources.cs        # K8s Secrets (credentials DB + RabbitMQ)
-    ├── DatabaseResources.cs       # StatefulSet PostgreSQL × 2 + Services + postgres_exporter
+    ├── CnpgResources.cs           # Helm cloudnative-pg operator (namespace cnpg-system)
+    ├── DatabaseResources.cs       # Cluster CNPG × 2 + Pooler × 2 + postgres_exporter
     ├── MessagingResources.cs      # Deployment RabbitMQ + Service
     ├── CacheResources.cs          # Deployment Redis + Service
     ├── KedaResources.cs           # Helm KEDA + Secret AMQP + ScaledObject inventory-api
@@ -39,10 +40,10 @@ infra/Ecommerce.Infra/
 ### Ordre de création (dépendances)
 
 ```
-SecretsResources
-    ↓ (DependsOn)
+SecretsResources   CnpgResources (Helm CNPG operator)
+    ↓ (DependsOn combiné)
 DatabaseResources   MessagingResources   CacheResources
-    ↓
+    ↓                  └── kubectl apply Cluster + Pooler YAML (Pulumi.Command)
 KedaResources (Helm KEDA → Secret AMQP → kubectl ScaledObject)
     ↓
 OrderServiceResources   InventoryServiceResources   GatewayResources
@@ -135,10 +136,14 @@ Chaque pod consomme les secrets via `envFrom.secretRef` — aucune valeur en cla
 
 | Nom K8s | Clés injectées | Consommateurs |
 |---|---|---|
-| `order-db-credentials` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ConnectionStrings__OrderDb` | order-db, order-api |
-| `inventory-db-credentials` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ConnectionStrings__InventoryDb` | inventory-db, inventory-api |
+| `order-db-credentials` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ConnectionStrings__OrderDb` | init containers, order-api, postgres-exporter-order |
+| `inventory-db-credentials` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `ConnectionStrings__InventoryDb` | init containers, inventory-api, postgres-exporter-inventory |
 | `rabbitmq-credentials` | `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`, `RabbitMQ__Username`, `RabbitMQ__Password` | rabbitmq, order-api, inventory-api |
 | `keda-rabbitmq-secret` | `amqp` (URL AMQP complète) | KEDA operator (TriggerAuthentication) |
+| `order-db-pg-password` | `username`, `password` | CNPG — bootstrap superuser postgres (initdb) |
+| `inventory-db-pg-password` | `username`, `password` | CNPG — bootstrap superuser postgres (initdb) |
+| `order-db-superuser` | `username`, `password` | Auto-créé par CNPG — Pooler authQuery |
+| `inventory-db-superuser` | `username`, `password` | Auto-créé par CNPG — Pooler authQuery |
 
 ### Vérifier les secrets
 
@@ -167,43 +172,115 @@ Pour la production, remplacer les K8s Secrets natifs par ESO pointant vers AWS/A
 
 ---
 
-## Bases de données — StatefulSet
+## Bases de données — CNPG Cluster + Pooler
 
-PostgreSQL utilise un **StatefulSet** (et non un Deployment) pour garantir :
-- Un seul pod actif à la fois (`order-db-0`)
-- Un PVC stable et lié au pod (`data-order-db-0`)
-- Un arrêt ordonné avant redémarrage (évite la corruption WAL)
+PostgreSQL est géré par l'**opérateur CloudNativePG (CNPG)**, remplaçant les StatefulSets manuels.  
+CNPG fournit HA, failover automatique, PVCs gérés et un Pooler PgBouncer intégré.
+
+### Architecture
+
+```
+order-db-pg-password (Secret bootstrap)
+    │
+    ▼  kubectl apply --server-side
+order-db (Cluster CNPG)
+    │  CNPG crée automatiquement :
+    ├── order-db-rw:5432       ← primary  (init containers, postgres_exporter)
+    ├── order-db-ro:5432       ← replicas (lectures, optionnel)
+    └── order-db-superuser     ← Secret auto-créé (credentials PgBouncer authQuery)
+
+order-db-pooler (Pooler CNPG / PgBouncer)
+    └── order-db-pooler:5432  ← point d'entrée app (ConnectionStrings__OrderDb)
+```
 
 ### Ressources créées par DB
 
 ```
-order-db-headless    Service ClusterIP: None  (requis par le StatefulSet pour les DNS pods)
-order-db             Service ClusterIP        (utilisé par order-api)
-order-db             StatefulSet              (pod: order-db-0)
-data-order-db-0      PersistentVolumeClaim    (1 Gi, géré par le StatefulSet)
+order-db-pg-password   Secret K8s (bootstrap superuser postgres pour initdb)
+order-db               Cluster CNPG → pods order-db-1, order-db-2... + PVCs
+order-db-rw            Service ClusterIP (primary — init containers, exporter)
+order-db-ro            Service ClusterIP (replicas, si instances > 1)
+order-db-r             Service ClusterIP (tout pod)
+order-db-pooler        Pooler CNPG → pod(s) PgBouncer
+order-db-pooler        Service ClusterIP (PgBouncer — connection strings app)
 ```
 
-### Hook preStop — arrêt gracieux
+### Configuration — Pulumi.dev.yaml
 
-Avant que Kubernetes envoie `SIGTERM`, le hook force un checkpoint PostgreSQL :
-
-```bash
-pg_ctl stop -D "$PGDATA" -m fast || true
+```yaml
+cnpg:version: "1.24.0"       # version du chart Helm cloudnative-pg
+cnpg:orderInstances: "1"     # pods postgres order-db   (dev=1, prod=3)
+cnpg:inventoryInstances: "1" # pods postgres inventory-db
+cnpg:poolerInstances: "1"    # pods PgBouncer par cluster (dev=1, prod=2)
 ```
 
-`TerminationGracePeriodSeconds: 60` laisse le temps au checkpoint de se terminer.
+### PgBouncer — Session mode
 
-### Modifier la taille du PVC
+Le Pooler utilise `poolMode: session` pour la compatibilité EF Core / Npgsql.
 
-`VolumeClaimTemplates` est immuable dans un StatefulSet. Pour changer la taille :
+> **Pourquoi session et non transaction ?** Npgsql active les prepared statements par défaut.  
+> Le mode transaction PgBouncer interdit les prepared statements entre transactions → erreur.  
+> En mode session, chaque connexion client obtient une connexion PG dédiée pour sa durée de vie.
+
+Paramètres PgBouncer :
+
+| Paramètre | Valeur | Description |
+|---|---|---|
+| `poolMode` | `session` | Compatible EF Core / prepared statements |
+| `max_client_conn` | `1000` | Connexions app → PgBouncer |
+| `default_pool_size` | `20` | Connexions PgBouncer → PostgreSQL par user |
+| `authQuery` | pg_shadow | PgBouncer valide les credentials via le superuser |
+
+### Vérifier
 
 ```bash
-# 1. Supprimer le StatefulSet sans supprimer les pods ni les PVCs
-kubectl delete sts order-db -n ecommerce --cascade=orphan
+# Clusters CNPG (READY=True après ~60 s)
+kubectl get cluster -n ecommerce
 
-# 2. Modifier la taille dans DatabaseResources.cs
-# 3. Redéployer — Pulumi recrée le StatefulSet avec les nouveaux PVCs
+# Poolers (pods PgBouncer Running)
+kubectl get pooler -n ecommerce
+
+# Connexion directe via service -rw
+kubectl exec -n ecommerce deploy/order-api -- \
+  psql -h order-db-rw -U postgres -d order_db -c "SELECT count(*) FROM pg_stat_activity"
+
+# Connexion via Pooler
+kubectl exec -n ecommerce deploy/order-api -- \
+  psql -h order-db-pooler -U postgres -d order_db -c "SELECT 1"
+```
+
+### Procédure de migration dev (StatefulSets → CNPG)
+
+> ⚠️ **Perte de données** — les données des anciens StatefulSets ne sont pas migrées.  
+> Utiliser uniquement pour l'environnement de développement.
+
+```bash
+# 1. Supprimer les anciens StatefulSets et PVCs
+kubectl delete statefulset order-db inventory-db -n ecommerce
+kubectl delete pvc data-order-db-0 data-inventory-db-0 -n ecommerce
+
+# 2. Pré-charger les images CNPG dans Kind
+podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0
+kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
+podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
+kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
+
+# 3. Déployer
+cd infra/Ecommerce.Infra
 pulumi up --yes
+```
+
+### Production — next steps
+
+Pour la production, configurer dans `Pulumi.prod.yaml` :
+
+```yaml
+cnpg:orderInstances: "3"     # 1 primary + 2 replicas (streaming replication)
+cnpg:inventoryInstances: "3"
+cnpg:poolerInstances: "2"    # 2 pods PgBouncer pour la HA du pooler
+
+# Backup S3 (ajouter dans DatabaseResources.cs — ScheduledBackup CNPG)
+# Voir : https://cloudnative-pg.io/documentation/current/backup_recovery/
 ```
 
 ---

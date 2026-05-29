@@ -55,6 +55,18 @@ public class KedaResourcesArgs
     /// </summary>
     public int CooldownPeriod { get; set; } = 60;
 
+    /// <summary>
+    /// Fenêtre de stabilisation du HPA interne KEDA pour le scale-in (secondes).
+    /// Le HPA Kubernetes applique sa propre fenêtre (300 s par défaut) en plus du
+    /// cooldownPeriod KEDA. Cette valeur surcharge ce défaut via
+    /// spec.advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.stabilizationWindowSeconds.
+    ///
+    /// Temps de scale-in effectif ≈ cooldownPeriod + scaleDownWindow.
+    /// Valeur recommandée : 120–300 s. En dessous de 60 s, risque de thrashing
+    /// si la queue oscille autour du seuil entre deux cycles de polling.
+    /// </summary>
+    public int ScaleDownWindow { get; set; } = 240;
+
     /// <summary>Version du chart Helm KEDA (kedacore/keda).</summary>
     public string KedaVersion { get; set; } = "2.17.0";
 }
@@ -198,6 +210,15 @@ spec:
   maxReplicaCount: {maxReplicas}
   pollingInterval: {pollInterval}
   cooldownPeriod: {cooldown}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: {args.ScaleDownWindow}
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
   triggers:
   - type: rabbitmq
     metadata:

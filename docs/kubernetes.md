@@ -72,15 +72,24 @@ kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
 Kind tire les images depuis internet au moment du déploiement. Les pré-charger évite les timeouts Helm et les erreurs `ImagePullBackOff`.
 
 ```bash
-# Bases de données et messagerie
+# Init containers (psql) + messagerie + cache
 podman pull postgres:16-alpine
 podman pull rabbitmq:4.3.1-management-alpine
+podman pull redis:7-alpine
 kind load docker-image postgres:16-alpine                --name ecommerce
 kind load docker-image rabbitmq:4.3.1-management-alpine  --name ecommerce
+kind load docker-image redis:7-alpine                    --name ecommerce
 
-# Cache
-podman pull redis:7-alpine
-kind load docker-image redis:7-alpine --name ecommerce
+# CNPG (opérateur + PostgreSQL 16 bookworm) — images venant de ghcr.io
+# L'image bookworm (non alpine) est la seule officiellement supportée par CNPG.
+# L'opérateur tourne dans cnpg-system, PostgreSQL tourne dans ecommerce.
+podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0
+kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
+podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
+kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
+# PgBouncer — utilisé par les Poolers CNPG (version distincte de l'opérateur)
+podman pull ghcr.io/cloudnative-pg/pgbouncer:1.23.0
+kind load docker-image ghcr.io/cloudnative-pg/pgbouncer:1.23.0 --name ecommerce
 
 # KEDA (operator + metrics server + webhooks) — images venant de ghcr.io
 podman pull ghcr.io/kedacore/keda:2.17.0
@@ -164,8 +173,10 @@ kubectl get pods -n ecommerce -w
 
 ```
 NAME                                      READY   STATUS    RESTARTS
-order-db-0                                1/1     Running   0          ← StatefulSet
-inventory-db-0                            1/1     Running   0          ← StatefulSet
+order-db-1                                1/1     Running   0          ← CNPG Cluster (primary)
+order-db-pooler-xxx                       1/1     Running   0          ← CNPG Pooler (PgBouncer)
+inventory-db-1                            1/1     Running   0          ← CNPG Cluster (primary)
+inventory-db-pooler-xxx                   1/1     Running   0          ← CNPG Pooler (PgBouncer)
 rabbitmq-xxx                              1/1     Running   0
 redis-xxx                                 1/1     Running   0
 order-api-xxx                             1/1     Running   0
@@ -173,6 +184,17 @@ inventory-api-xxx                         1/1     Running   0
 gateway-xxx                               1/1     Running   0
 postgres-exporter-order-xxx               1/1     Running   0
 postgres-exporter-inventory-xxx           1/1     Running   0
+```
+
+### État des pods — namespace cnpg-system
+
+```bash
+kubectl get pods -n cnpg-system
+```
+
+```
+NAME                                      READY   STATUS
+cloudnative-pg-xxx                        1/1     Running   ← opérateur CNPG
 ```
 
 ### État des pods — namespace keda
@@ -225,8 +247,16 @@ kubectl get secrets -n ecommerce
 #           rabbitmq-credentials, keda-rabbitmq-secret
 
 kubectl get svc -n ecommerce
-# Attendu : order-db, order-db-headless, inventory-db, inventory-db-headless,
-#           rabbitmq, redis, order-api, inventory-api, gateway
+# Attendu (CNPG crée automatiquement les services -rw, -ro, -r, -pooler) :
+#   order-db-rw, order-db-ro, order-db-r, order-db-pooler,
+#   inventory-db-rw, inventory-db-ro, inventory-db-r, inventory-db-pooler,
+#   rabbitmq, redis, order-api, inventory-api, gateway
+
+kubectl get cluster -n ecommerce
+# Attendu : order-db READY=True, inventory-db READY=True
+
+kubectl get pooler -n ecommerce
+# Attendu : order-db-pooler, inventory-db-pooler
 ```
 
 ### Health checks applicatifs
@@ -342,10 +372,14 @@ kubectl config use-context kind-ecommerce
 ### Étape 4 — Recharger toutes les images
 
 ```bash
-# Bases de données / messagerie / cache
+# Init containers / messagerie / cache
 podman pull postgres:16-alpine && kind load docker-image postgres:16-alpine --name ecommerce
 podman pull rabbitmq:4.3.1-management-alpine && kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
 podman pull redis:7-alpine && kind load docker-image redis:7-alpine --name ecommerce
+
+# CNPG
+podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 && kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
+podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm && kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
 
 # KEDA
 podman pull ghcr.io/kedacore/keda:2.17.0 && kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
