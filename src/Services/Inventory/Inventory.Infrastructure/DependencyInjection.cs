@@ -46,6 +46,12 @@ public static class DependencyInjection
         // ── MassTransit / RabbitMQ ────────────────────────────────────────────
         services.AddMassTransit(x =>
         {
+            // KebabCaseEndpointNameFormatter :
+            //   ProductAddedToCartConsumer → queue "product-added-to-cart"
+            // ⚠️ DefaultEndpointNameFormatter produirait "ProductAddedToCart" (PascalCase).
+            // Le nom kebab-case est celui configuré dans KEDA (keda:queueName dans Pulumi.dev.yaml).
+            x.SetKebabCaseEndpointNameFormatter();
+
             x.AddConsumer<ProductAddedToCartConsumer>();
 
             x.UsingRabbitMq((ctx, cfg) =>

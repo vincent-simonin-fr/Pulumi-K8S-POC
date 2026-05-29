@@ -1,8 +1,6 @@
 using Pulumi;
-using Pulumi.Kubernetes.Autoscaling.V2;
 using Pulumi.Kubernetes.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Apps.V1;
-using Pulumi.Kubernetes.Types.Inputs.Autoscaling.V2;
 using Pulumi.Kubernetes.Types.Inputs.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Meta.V1;
 using Deployment = Pulumi.Kubernetes.Apps.V1.Deployment;
@@ -27,6 +25,12 @@ public class InventoryServiceResourcesArgs
     public string MemoryRequest { get; set; } = "128Mi";
     public string MemoryLimit { get; set; } = "256Mi";
 
+    /// <summary>
+    /// HpaArgs conservé pour compatibilité ascendante mais ignoré :
+    /// le scaling d'inventory-api est désormais géré par KEDA (KedaResources).
+    /// KEDA crée son propre HPA interne à partir du ScaledObject.
+    /// </summary>
+    [Obsolete("Remplacé par KedaResources — KEDA gère le scaling d'inventory-api via ScaledObject.")]
     public HpaArgs Hpa { get; set; } = new();
 }
 
@@ -37,11 +41,13 @@ public class InventoryServiceResources : ComponentResource
     public InventoryServiceResources(string name, InventoryServiceResourcesArgs args, ComponentResourceOptions? opts = null)
         : base("ecommerce:infra:InventoryServiceResources", name, opts)
     {
-        // Quand HPA actif : ignorer les changements sur spec.replicas pour ne pas écraser le scaling
+        // KEDA gère spec.replicas via son HPA interne → toujours ignorer ce champ.
+        // Sans IgnoreChanges, Pulumi réinitialiserait le nombre de réplicas à chaque
+        // `pulumi up`, annulant le scaling décidé par KEDA.
         var deploymentOpts = new CustomResourceOptions
         {
-            Parent = this,
-            IgnoreChanges = args.Hpa.Enabled ? ["spec.replicas"] : []
+            Parent        = this,
+            IgnoreChanges = ["spec.replicas"]
         };
 
         var deployment = new Deployment("inventory-api-deploy", new DeploymentArgs
@@ -143,63 +149,12 @@ public class InventoryServiceResources : ComponentResource
             }
         }, new CustomResourceOptions { Parent = this });
 
-        if (args.Hpa.Enabled)
-            CreateHpa(args, new CustomResourceOptions { Parent = this, DependsOn = deployment });
+        // Le scaling d'inventory-api est géré par KEDA (KedaResources.cs).
+        // KEDA crée automatiquement un HPA interne à partir du ScaledObject.
+        // Ne pas créer d'HPA natif ici : conflit avec l'HPA KEDA si les deux existent.
 
         ServiceName = Output.Create("inventory-api");
         RegisterOutputs(new Dictionary<string, object?> { ["serviceName"] = ServiceName });
-    }
-
-    private static void CreateHpa(InventoryServiceResourcesArgs args, CustomResourceOptions opts)
-    {
-        var metrics = new List<MetricSpecArgs>
-        {
-            new()
-            {
-                Type = "Resource",
-                Resource = new ResourceMetricSourceArgs
-                {
-                    Name   = "cpu",
-                    Target = new MetricTargetArgs
-                    {
-                        Type               = "Utilization",
-                        AverageUtilization = args.Hpa.CpuPercent
-                    }
-                }
-            }
-        };
-
-        if (args.Hpa.MemoryPercent.HasValue)
-            metrics.Add(new MetricSpecArgs
-            {
-                Type = "Resource",
-                Resource = new ResourceMetricSourceArgs
-                {
-                    Name   = "memory",
-                    Target = new MetricTargetArgs
-                    {
-                        Type               = "Utilization",
-                        AverageUtilization = args.Hpa.MemoryPercent.Value
-                    }
-                }
-            });
-
-        new HorizontalPodAutoscaler("inventory-api-hpa", new HorizontalPodAutoscalerArgs
-        {
-            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "inventory-api" },
-            Spec = new HorizontalPodAutoscalerSpecArgs
-            {
-                ScaleTargetRef = new CrossVersionObjectReferenceArgs
-                {
-                    ApiVersion = "apps/v1",
-                    Kind       = "Deployment",
-                    Name       = "inventory-api"
-                },
-                MinReplicas = args.Hpa.MinReplicas,
-                MaxReplicas = args.Hpa.MaxReplicas,
-                Metrics     = metrics
-            }
-        }, opts);
     }
 
     // Seules les variables non secrètes restent ici.

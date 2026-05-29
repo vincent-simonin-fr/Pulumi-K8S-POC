@@ -71,7 +71,24 @@ config:
   observability:prometheusVersion: "v3.11.3"
   observability:grafanaVersion:    "13.0.1-security-01"
 
-  # HPA — HorizontalPodAutoscaler
+  # ── Mode presale (flash sale, promo, événement) ─────────────────────────
+  # Quand activé, les HPA sont forcés au minReplicas presale AVANT le pic.
+  # Les pods sont déjà en place → pas de cold-start pendant le flash sale.
+  #
+  # Workflow :
+  #   Avant : pulumi config set presale:enabled true  && pulumi up --yes
+  #   Après : pulumi config set presale:enabled false && pulumi up --yes
+  #
+  # Alternative immédiate (sans pulumi up) :
+  #   scripts\presale.cmd start
+  #   scripts\presale.cmd stop
+  presale:enabled: "false"
+  presale:inventoryApiMin: "3"   # pods inventory-api en attente du pic
+  presale:orderApiMin: "3"       # pods order-api en attente du pic
+  presale:gatewayMin: "2"        # pods gateway en attente du pic
+
+  # HPA — HorizontalPodAutoscaler (order-api + gateway uniquement)
+  # ⚠️ inventory-api n'utilise plus l'HPA natif — KEDA gère son scaling (voir section keda ci-dessous).
   # ⚠️ Requiert que le Metrics Server soit installé dans le cluster :
   #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
   #   kubectl patch deployment metrics-server -n kube-system --type='json' \
@@ -82,14 +99,30 @@ config:
   hpa:orderApiCpu: "70"
   # hpa:orderApiMemory: "80"   # optionnel — décommenter pour scaler sur la mémoire aussi
 
-  hpa:inventoryApiEnabled: "true"
-  hpa:inventoryApiMin: "1"
-  hpa:inventoryApiMax: "4"
-  hpa:inventoryApiCpu: "70"
-  # hpa:inventoryApiMemory: "80"
+  # hpa:inventoryApiEnabled / inventoryApiMin / inventoryApiMax : ignorés (KEDA gère inventory-api)
+  hpa:inventoryApiMin: "1"   # utilisé par PresaleMin() comme valeur nominale
 
   hpa:gatewayEnabled: "true"
   hpa:gatewayMin: "1"
   hpa:gatewayMax: "3"
   hpa:gatewayCpu: "70"
   # hpa:gatewayMemory: "80"
+
+  # ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ─────────
+  # KEDA scale inventory-api sur la profondeur de la queue RabbitMQ.
+  # Réaction : ~5 s (vs ~75 s pour HPA CPU) — scaling intent-based, pas consequence-based.
+  #
+  # Architecture :
+  #   ProductAddedToCartEvent → queue RabbitMQ → KEDA détecte depth > queueLength
+  #     → scale-out inventory-api (pods Ready en ~30 s avec init container)
+  #
+  # Nom de la queue : MassTransit KebabCaseEndpointNameFormatter (configuré dans
+  # Inventory.Infrastructure/DependencyInjection.cs) produit "product-added-to-cart".
+  # ⚠️ DefaultEndpointNameFormatter produirait "ProductAddedToCart" (PascalCase) — ne pas confondre.
+  # Vérifier dans l'UI RabbitMQ (http://localhost:15672 → Queues) après démarrage.
+  keda:version: "2.17.0"
+  keda:queueName: "product-added-to-cart"
+  keda:queueLength: "5"          # messages par réplica → scale-out si queue > N*replicas
+  keda:inventoryApiMax: "4"      # plafond Kind mono-nœud (8×pool=800 dépasse max_connections=100 PG)
+  keda:pollingInterval: "5"      # secondes entre chaque lecture de la queue
+  keda:cooldownPeriod: "60"      # secondes d'inactivité avant scale-in

@@ -66,9 +66,13 @@ public class SecretsResources : ComponentResource
                 ["POSTGRES_PASSWORD"]          = args.OrderDbPassword,
                 ["POSTGRES_DB"]                = args.OrderDbName,
                 // order-api — ASP.NET Core ConnectionStrings__OrderDb
+                // Maximum Pool Size : limite le pool Npgsql par pod (défaut = 100 — trop élevé
+                // quand plusieurs réplicas tournent en parallèle sur un cluster Kind mono-nœud).
+                // 10 connexions/pod × 4 pods max = 40 → large marge sous max_connections=100 de PG.
                 ["ConnectionStrings__OrderDb"] =
                     $"Host={args.OrderDbHost};Port=5432;Database={args.OrderDbName};" +
-                    $"Username={args.OrderDbUser};Password={args.OrderDbPassword}"
+                    $"Username={args.OrderDbUser};Password={args.OrderDbPassword};" +
+                    $"Maximum Pool Size=10;Minimum Pool Size=0"
             }
         }, resourceOpts);
 
@@ -83,9 +87,13 @@ public class SecretsResources : ComponentResource
                 ["POSTGRES_PASSWORD"]               = args.InventoryDbPassword,
                 ["POSTGRES_DB"]                     = args.InventoryDbName,
                 // inventory-api — ASP.NET Core ConnectionStrings__InventoryDb
+                // Maximum Pool Size : voir commentaire order-api ci-dessus.
+                // inventory-api peut avoir jusqu'à keda:inventoryApiMax réplicas (4 en dev Kind).
+                // 4 pods × 10 connexions = 40 connexions → sous max_connections=100 de PG.
                 ["ConnectionStrings__InventoryDb"]  =
                     $"Host={args.InventoryDbHost};Port=5432;Database={args.InventoryDbName};" +
-                    $"Username={args.InventoryDbUser};Password={args.InventoryDbPassword}"
+                    $"Username={args.InventoryDbUser};Password={args.InventoryDbPassword};" +
+                    $"Maximum Pool Size=10;Minimum Pool Size=0"
             }
         }, resourceOpts);
 

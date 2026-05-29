@@ -101,7 +101,7 @@ services:
     container_name: order-api
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__OrderDb: "Host=order-db;Port=5432;Database=order_db;Username=postgres;Password=postgres"
+      ConnectionStrings__OrderDb: "Host=order-db;Port=5432;Database=order_db;Username=postgres;Password=postgres;Maximum Pool Size=10;Minimum Pool Size=0"
       RabbitMQ__Host: rabbitmq
       RabbitMQ__VirtualHost: /
       RabbitMQ__Username: guest
@@ -124,7 +124,7 @@ services:
     container_name: inventory-api
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__InventoryDb: "Host=inventory-db;Port=5432;Database=inventory_db;Username=postgres;Password=postgres"
+      ConnectionStrings__InventoryDb: "Host=inventory-db;Port=5432;Database=inventory_db;Username=postgres;Password=postgres;Maximum Pool Size=10;Minimum Pool Size=0"
       ConnectionStrings__Redis: "redis:6379"
       RabbitMQ__Host: rabbitmq
       RabbitMQ__VirtualHost: /

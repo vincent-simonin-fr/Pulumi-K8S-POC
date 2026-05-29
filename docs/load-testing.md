@@ -113,6 +113,17 @@ SLOs assouplis (p95 < 2s, errors < 10%) — l'objectif est d'observer la dégrad
 | Retour | 300 → 1 | 10s |
 | Récupération | 1 | 1 min |
 
+**Comportement avec KEDA** : dès que les messages `ProductAddedToCartEvent` s'accumulent dans la queue RabbitMQ, KEDA détecte la profondeur (poll toutes les 5 s) et scale-out inventory-api. Réaction ~5 s vs ~75 s avec HPA CPU.
+
+**Comportement avec Redis** : les requêtes `GET /inventory` sont servies depuis le cache pendant le pic — soulagement du pool PostgreSQL d'inventory-db.
+
+**Mode presale** (recommandé avant un vrai flash sale) :
+```bash
+scripts\presale.cmd start   # pré-scale avant le pic → pods déjà chauds
+k6 run tests/Ecommerce.LoadTests/scenarios/spike.js
+scripts\presale.cmd stop    # retour au dimensionnement nominal
+```
+
 ---
 
 ## Intégration Prometheus → Grafana

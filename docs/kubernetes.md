@@ -69,25 +69,46 @@ kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
 
 ### Images publiques (pré-charger pour éviter les timeouts)
 
+Kind tire les images depuis internet au moment du déploiement. Les pré-charger évite les timeouts Helm et les erreurs `ImagePullBackOff`.
+
 ```bash
 # Bases de données et messagerie
 podman pull postgres:16-alpine
 podman pull rabbitmq:4.3.1-management-alpine
-
 kind load docker-image postgres:16-alpine                --name ecommerce
 kind load docker-image rabbitmq:4.3.1-management-alpine  --name ecommerce
 
-# Observabilité (optionnel — Kind les pull si réseau disponible)
+# Cache
+podman pull redis:7-alpine
+kind load docker-image redis:7-alpine --name ecommerce
+
+# KEDA (operator + metrics server + webhooks) — images venant de ghcr.io
+podman pull ghcr.io/kedacore/keda:2.17.0
+kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
+podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0
+kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
+podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0
+kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
+
+# Observabilité
 podman pull otel/opentelemetry-collector-contrib:0.153.0
 podman pull jaegertracing/all-in-one:1.76.0
 podman pull prom/prometheus:v3.11.3
 podman pull grafana/grafana:13.0.1-security-01
+podman pull prometheuscommunity/postgres-exporter:v0.16.0
+podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+podman pull quay.io/prometheus/node-exporter:v1.9.1
 
-kind load docker-image otel/opentelemetry-collector-contrib:0.153.0 --name ecommerce
-kind load docker-image jaegertracing/all-in-one:1.76.0              --name ecommerce
-kind load docker-image prom/prometheus:v3.11.3                      --name ecommerce
-kind load docker-image grafana/grafana:13.0.1-security-01                       --name ecommerce
+kind load docker-image otel/opentelemetry-collector-contrib:0.153.0      --name ecommerce
+kind load docker-image jaegertracing/all-in-one:1.76.0                   --name ecommerce
+kind load docker-image prom/prometheus:v3.11.3                           --name ecommerce
+kind load docker-image grafana/grafana:13.0.1-security-01                --name ecommerce
+kind load docker-image prometheuscommunity/postgres-exporter:v0.16.0     --name ecommerce
+kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 --name ecommerce
+kind load docker-image quay.io/prometheus/node-exporter:v1.9.1           --name ecommerce
 ```
+
+> Le script `scripts/k8s_complete_launch.cmd` fait tout cela automatiquement.
 
 ### Vérifier que les images sont dans Kind
 
@@ -117,13 +138,13 @@ pulumi stack output
 
 ```bash
 # 1. Rebuilder l'image modifiée
-podman build -t localhost/ecommerce/order-api:dev -f docker/order-api/Dockerfile .
+podman build -t localhost/ecommerce/inventory-api:dev -f docker/inventory-api/Dockerfile .
 
 # 2. La recharger dans Kind
-kind load docker-image localhost/ecommerce/order-api:dev --name ecommerce
+kind load docker-image localhost/ecommerce/inventory-api:dev --name ecommerce
 
 # 3. Forcer le redémarrage du pod (pas de re-pull nécessaire, ImagePullPolicy: IfNotPresent)
-kubectl rollout restart deployment/order-api -n ecommerce
+kubectl rollout restart deployment/inventory-api -n ecommerce
 
 # OU redéployer tout via Pulumi
 pulumi up --yes
@@ -133,39 +154,79 @@ pulumi up --yes
 
 ## Vérifier le déploiement
 
-### État des pods
+### État des pods — namespace ecommerce
 
 ```bash
-# Vue d'ensemble (attendre STATUS=Running, READY=1/1)
 kubectl get pods -n ecommerce -w
-
-# Détails d'un pod (events, conditions)
-kubectl describe pod -n ecommerce <nom-du-pod>
 ```
 
-### État attendu après un déploiement réussi
+État attendu après un déploiement réussi :
 
 ```
-NAME                             READY   STATUS    RESTARTS
-order-db-0                       1/1     Running   0          ← StatefulSet
-inventory-db-0                   1/1     Running   0          ← StatefulSet
-rabbitmq-xxx                     1/1     Running   0
-order-api-xxx                    1/1     Running   0
-inventory-api-xxx                1/1     Running   0
-gateway-xxx                      1/1     Running   0
+NAME                                      READY   STATUS    RESTARTS
+order-db-0                                1/1     Running   0          ← StatefulSet
+inventory-db-0                            1/1     Running   0          ← StatefulSet
+rabbitmq-xxx                              1/1     Running   0
+redis-xxx                                 1/1     Running   0
+order-api-xxx                             1/1     Running   0
+inventory-api-xxx                         1/1     Running   0
+gateway-xxx                               1/1     Running   0
+postgres-exporter-order-xxx               1/1     Running   0
+postgres-exporter-inventory-xxx           1/1     Running   0
+```
+
+### État des pods — namespace keda
+
+```bash
+kubectl get pods -n keda
+```
+
+```
+NAME                                      READY   STATUS
+keda-operator-xxx                         1/1     Running
+keda-metrics-apiserver-xxx                1/1     Running
+keda-admission-webhooks-xxx               1/1     Running
+```
+
+### État des pods — namespace monitoring
+
+```bash
+kubectl get pods -n monitoring
+```
+
+```
+NAME                                 READY   STATUS
+otel-collector-xxx                   1/1     Running
+jaeger-xxx                           1/1     Running
+prometheus-xxx                       1/1     Running
+grafana-xxx                          1/1     Running
+kube-state-metrics-xxx               1/1     Running
+node-exporter-xxx                    1/1     Running   ← DaemonSet
+```
+
+### KEDA — ScaledObject et HPA interne
+
+```bash
+# ScaledObject inventory-api
+kubectl get scaledobject -n ecommerce
+# NAME            SCALETARGETKIND   SCALETARGETNAME   READY   ACTIVE
+# inventory-api   Deployment        inventory-api     True    False
+
+# HPA interne créé par KEDA
+kubectl get hpa -n ecommerce
+# keda-hpa-inventory-api   Deployment/inventory-api   0/5   1   8   ...
 ```
 
 ### Secrets et Services
 
 ```bash
-# Vérifier les secrets créés par Pulumi
 kubectl get secrets -n ecommerce
-# Attendu : order-db-credentials, inventory-db-credentials, rabbitmq-credentials
+# Attendu : order-db-credentials, inventory-db-credentials,
+#           rabbitmq-credentials, keda-rabbitmq-secret
 
-# Vérifier les services
 kubectl get svc -n ecommerce
 # Attendu : order-db, order-db-headless, inventory-db, inventory-db-headless,
-#           rabbitmq, order-api, inventory-api, gateway
+#           rabbitmq, redis, order-api, inventory-api, gateway
 ```
 
 ### Health checks applicatifs
@@ -187,7 +248,7 @@ kubectl logs -n ecommerce deploy/inventory-api -f
 kubectl logs -n ecommerce deploy/order-api --previous
 ```
 
-### HPA (si Metrics Server installé)
+### HPA (order-api et gateway)
 
 ```bash
 kubectl get hpa -n ecommerce
@@ -219,7 +280,9 @@ kubectl get pods -n ecommerce
 
 ## Metrics Server (HPA)
 
-Le HorizontalPodAutoscaler nécessite le Metrics Server pour lire les métriques CPU/mémoire.
+Le HorizontalPodAutoscaler pour order-api et gateway nécessite le Metrics Server pour lire les métriques CPU/mémoire.
+
+> **inventory-api** utilise KEDA (pas de Metrics Server requis pour son scaling).
 
 ### Installation
 
@@ -279,27 +342,32 @@ kubectl config use-context kind-ecommerce
 ### Étape 4 — Recharger toutes les images
 
 ```bash
-# Bases de données / messagerie
-podman pull postgres:16-alpine
-podman pull rabbitmq:4.3.1-management-alpine
-kind load docker-image postgres:16-alpine                --name ecommerce
-kind load docker-image rabbitmq:4.3.1-management-alpine  --name ecommerce
+# Bases de données / messagerie / cache
+podman pull postgres:16-alpine && kind load docker-image postgres:16-alpine --name ecommerce
+podman pull rabbitmq:4.3.1-management-alpine && kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
+podman pull redis:7-alpine && kind load docker-image redis:7-alpine --name ecommerce
 
-# Services applicatifs
+# KEDA
+podman pull ghcr.io/kedacore/keda:2.17.0 && kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
+podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 && kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
+podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0 && kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
+
+# Services applicatifs (rebuild si code modifié)
 kind load docker-image localhost/ecommerce/order-api:dev     --name ecommerce
 kind load docker-image localhost/ecommerce/inventory-api:dev --name ecommerce
 kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
 
 # Observabilité
-podman pull otel/opentelemetry-collector-contrib:0.153.0
-podman pull jaegertracing/all-in-one:1.76.0
-podman pull prom/prometheus:v3.11.3
-podman pull grafana/grafana:13.0.1-security-01
-kind load docker-image otel/opentelemetry-collector-contrib:0.153.0 --name ecommerce
-kind load docker-image jaegertracing/all-in-one:1.76.0              --name ecommerce
-kind load docker-image prom/prometheus:v3.11.3                      --name ecommerce
-kind load docker-image grafana/grafana:13.0.1-security-01                       --name ecommerce
+podman pull otel/opentelemetry-collector-contrib:0.153.0 && kind load docker-image otel/opentelemetry-collector-contrib:0.153.0 --name ecommerce
+podman pull jaegertracing/all-in-one:1.76.0 && kind load docker-image jaegertracing/all-in-one:1.76.0 --name ecommerce
+podman pull prom/prometheus:v3.11.3 && kind load docker-image prom/prometheus:v3.11.3 --name ecommerce
+podman pull grafana/grafana:13.0.1-security-01 && kind load docker-image grafana/grafana:13.0.1-security-01 --name ecommerce
+podman pull prometheuscommunity/postgres-exporter:v0.16.0 && kind load docker-image prometheuscommunity/postgres-exporter:v0.16.0 --name ecommerce
+podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 && kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 --name ecommerce
+podman pull quay.io/prometheus/node-exporter:v1.9.1 && kind load docker-image quay.io/prometheus/node-exporter:v1.9.1 --name ecommerce
 ```
+
+> Le script `scripts/k8s_complete_launch.cmd` fait tout cela automatiquement depuis la racine du projet.
 
 ### Étape 5 — Redéployer
 
@@ -314,5 +382,7 @@ pulumi up --yes
 
 ```bash
 kubectl get pods -n ecommerce
+kubectl get pods -n keda
+kubectl get pods -n monitoring
 curl http://localhost:30080/health
 ```

@@ -21,12 +21,29 @@ public class EcommerceStack : Stack
         var secretsCfg      = new Config("secrets");
         var obsCfg          = new Config("observability");
         var ingressCfg      = new Config("ingress");
+        var presaleCfg      = new Config("presale");
+        var kedaCfg         = new Config("keda");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
         var jaegerNodePort  = obsCfg.GetInt32("jaegerNodePort")   ?? 30686;
         var ingressEnabled  = ingressCfg.GetBoolean("enabled")    ?? false;
         var domain          = ingressCfg.Get("domain")            ?? "wizzz.com";
+
+        // ── Mode presale ──────────────────────────────────────────────────────
+        // Quand presale:enabled = true, les minReplicas des HPA/ScaledObjects sont
+        // surchargés pour que les pods soient déjà en place avant le pic de trafic.
+        // Activation : pulumi config set presale:enabled true && pulumi up --yes
+        // Désactivation : pulumi config set presale:enabled false && pulumi up --yes
+        var presaleEnabled = presaleCfg.GetBoolean("enabled") ?? false;
+
+        // Retourne le minReplicas effectif : presale si activé, config HPA/KEDA sinon.
+        // Pour inventory-api : la valeur est passée au ScaledObject KEDA (minReplicaCount).
+        // Pour order-api/gateway : la valeur est passée à l'HPA natif (minReplicas).
+        int PresaleMin(string hpaKey, string presaleKey, int fallback = 1) =>
+            presaleEnabled
+                ? (presaleCfg.GetInt32(presaleKey) ?? fallback)
+                : (hpaCfg.GetInt32(hpaKey) ?? 1);
 
         // ── Observabilité (namespace monitoring — indépendant de ecommerce) ───
         var observability = new ObservabilityResources("observability", new ObservabilityResourcesArgs
@@ -86,6 +103,32 @@ public class EcommerceStack : Stack
             Namespace = namespaceName
         });
 
+        // ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ────────
+        // KEDA scale inventory-api en fonction de la profondeur de la queue
+        // RabbitMQ (ProductAddedToCartEvent). Réaction ~5 s vs ~75 s pour HPA CPU.
+        //
+        // Workflow presale :
+        //   pulumi config set presale:enabled true && pulumi up --yes
+        //   → minReplicaCount du ScaledObject passe à presale:inventoryApiMin (3)
+        //   → les pods sont pré-chauffés AVANT le pic, sans cold-start
+        //
+        // Urgence (sans pulumi up) :
+        //   scripts\presale.cmd start / stop
+        //   → patch direct du ScaledObject via kubectl
+        _ = new KedaResources("keda", new KedaResourcesArgs
+        {
+            Namespace       = namespaceName,
+            RabbitMqUser    = secretsCfg.Get("rabbitmqUser")     ?? "guest",
+            RabbitMqPassword= secretsCfg.Get("rabbitmqPassword") ?? "guest",
+            QueueName       = kedaCfg.Get("queueName")           ?? "product-added-to-cart",
+            QueueLength     = kedaCfg.GetInt32("queueLength")    ?? 5,
+            MinReplicas     = PresaleMin("inventoryApiMin", "inventoryApiMin", 3),
+            MaxReplicas     = kedaCfg.GetInt32("inventoryApiMax") ?? 8,
+            PollingInterval = kedaCfg.GetInt32("pollingInterval") ?? 5,
+            CooldownPeriod  = kedaCfg.GetInt32("cooldownPeriod")  ?? 60,
+            KedaVersion     = kedaCfg.Get("version")              ?? "2.17.0"
+        });
+
         // ── Services applicatifs ──────────────────────────────────────────────
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
         {
@@ -102,7 +145,7 @@ public class EcommerceStack : Stack
             Hpa = new HpaArgs
             {
                 Enabled       = hpaCfg.GetBoolean("orderApiEnabled") ?? false,
-                MinReplicas   = hpaCfg.GetInt32("orderApiMin") ?? 1,
+                MinReplicas   = PresaleMin("orderApiMin", "orderApiMin", 3),
                 MaxReplicas   = hpaCfg.GetInt32("orderApiMax") ?? 4,
                 CpuPercent    = hpaCfg.GetInt32("orderApiCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("orderApiMemory")
@@ -124,14 +167,7 @@ public class EcommerceStack : Stack
             CpuLimit              = resourcesCfg.Get("inventoryApiCpuLimit")      ?? "500m",
             MemoryRequest         = resourcesCfg.Get("inventoryApiMemoryRequest") ?? "128Mi",
             MemoryLimit           = resourcesCfg.Get("inventoryApiMemoryLimit")   ?? "256Mi",
-            Hpa = new HpaArgs
-            {
-                Enabled       = hpaCfg.GetBoolean("inventoryApiEnabled") ?? false,
-                MinReplicas   = hpaCfg.GetInt32("inventoryApiMin") ?? 1,
-                MaxReplicas   = hpaCfg.GetInt32("inventoryApiMax") ?? 4,
-                CpuPercent    = hpaCfg.GetInt32("inventoryApiCpu") ?? 70,
-                MemoryPercent = hpaCfg.GetInt32("inventoryApiMemory")
-            }
+            // Hpa : non passé — le scaling est géré par KEDA (ScaledObject ci-dessus).
         });
 
         var gateway = new GatewayResources("gateway", new GatewayResourcesArgs
@@ -151,7 +187,7 @@ public class EcommerceStack : Stack
             Hpa = new HpaArgs
             {
                 Enabled       = hpaCfg.GetBoolean("gatewayEnabled") ?? false,
-                MinReplicas   = hpaCfg.GetInt32("gatewayMin") ?? 1,
+                MinReplicas   = PresaleMin("gatewayMin", "gatewayMin", 2),
                 MaxReplicas   = hpaCfg.GetInt32("gatewayMax") ?? 3,
                 CpuPercent    = hpaCfg.GetInt32("gatewayCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("gatewayMemory")

@@ -23,12 +23,14 @@ kubectl config use-context kind-ecommerce
 
 :: ------------------------------------------------------------------
 echo.
-echo [2/5] Images infra (postgres, rabbitmq)...
+echo [2/5] Images infra (postgres, rabbitmq, redis)...
 :: ------------------------------------------------------------------
 podman pull postgres:16-alpine
 kind load docker-image postgres:16-alpine --name ecommerce
 podman pull rabbitmq:4.3.1-management-alpine
 kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
+podman pull redis:7-alpine
+kind load docker-image redis:7-alpine --name ecommerce
 
 :: ------------------------------------------------------------------
 echo.
@@ -48,6 +50,21 @@ podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
 kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 --name ecommerce
 podman pull quay.io/prometheus/node-exporter:v1.9.1
 kind load docker-image quay.io/prometheus/node-exporter:v1.9.1 --name ecommerce
+
+:: ------------------------------------------------------------------
+echo.
+echo [3b/5] Images KEDA (operator + metrics-server + webhooks)...
+:: ------------------------------------------------------------------
+:: Pré-charger les images KEDA dans Kind AVANT pulumi up.
+:: Sans pré-chargement, Kind tire depuis ghcr.io pendant le Helm install
+:: → timeout "context deadline exceeded" sur connexions lentes.
+:: Les trois images correspondent aux composants installés par le chart KEDA 2.17.0.
+podman pull ghcr.io/kedacore/keda:2.17.0
+kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
+podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0
+kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
+podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0
+kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
 
 :: ------------------------------------------------------------------
 echo.

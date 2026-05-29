@@ -37,9 +37,13 @@ podman compose down -v
 | Order API (OpenAPI) | `http://localhost:5001/scalar` |
 | Inventory API (OpenAPI) | `http://localhost:5002/scalar` |
 | RabbitMQ Management UI | `http://localhost:15672` (guest / guest) |
+| Redis | `localhost:6379` (CLI : `podman exec -it <redis-container> redis-cli`) |
 | Grafana | `http://localhost:3000` (sans login) |
 | Jaeger UI | `http://localhost:16686` |
 | Prometheus | `http://localhost:9090` |
+
+> **Redis** : en dev local avec podman-compose, inventory-api se connecte à Redis via `ConnectionStrings__Redis: "redis:6379"`.  
+> En cas d'indisponibilité Redis, l'API bascule automatiquement sur `IMemoryCache` (fallback sans dégradation fonctionnelle).
 
 ### Exemple d'appel direct (dev local, sans gateway)
 
