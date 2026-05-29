@@ -1,0 +1,86 @@
+config:
+  # ── Images (depuis un container registry en production) ──────────────────────
+  # Remplacer par votre registry : ghcr.io/<org>/... ou docker.io/<org>/...
+  orderApi:image: ghcr.io/wizzz/order-api:latest
+  inventoryApi:image: ghcr.io/wizzz/inventory-api:latest
+  gateway:image: ghcr.io/wizzz/gateway:latest
+
+  # ── Ingress + TLS (Let's Encrypt) ────────────────────────────────────────────
+  # Le domaine est configurable ici — toutes les URLs en dépendent :
+  #   wizzz.com          → gateway  (API publique)
+  #   grafana.wizzz.com  → Grafana  (monitoring, basic-auth requis)
+  #   jaeger.wizzz.com   → Jaeger   (tracing,    basic-auth requis)
+  ingress:enabled: "true"
+  ingress:domain: "wizzz.com"
+  ingress:acmeEmail: "ops@wizzz.com"
+  ingress:certManagerVersion: "v1.16.2"
+  ingress:nginxVersion: "4.11.3"
+  # Générer le htpasswd : htpasswd -nb admin <password>
+  # Puis chiffrer      : pulumi config set --secret ingress:monitoringBasicAuthHtpasswd "<valeur>"
+  # ingress:monitoringBasicAuthHtpasswd: <chiffré par --secret>
+
+  # ── Grafana — auth native (IngressEnabled désactive l'auth anonyme) ───────────
+  # pulumi config set --secret observability:grafanaAdminPassword <password>
+  # observability:grafanaAdminPassword: <chiffré par --secret>
+
+  # ── Réservation de stock ─────────────────────────────────────────────────────
+  reservation:ttlMinutes: "10"
+  reservation:checkIntervalSeconds: "30"
+
+  # ── Réplicas — minimums de production ────────────────────────────────────────
+  # ⚠️ db et rabbitmq : garder à 1 sans réplication configurée
+  replicas:orderApi: "2"
+  replicas:inventoryApi: "2"
+  replicas:gateway: "2"
+  replicas:db: "1"
+  replicas:rabbitmq: "1"
+
+  # ── Resources — à ajuster selon les nodes du cluster ─────────────────────────
+  resources:orderApiCpuRequest: "200m"
+  resources:orderApiCpuLimit: "1000m"
+  resources:orderApiMemoryRequest: "256Mi"
+  resources:orderApiMemoryLimit: "512Mi"
+
+  resources:inventoryApiCpuRequest: "200m"
+  resources:inventoryApiCpuLimit: "1000m"
+  resources:inventoryApiMemoryRequest: "256Mi"
+  resources:inventoryApiMemoryLimit: "512Mi"
+
+  resources:gatewayCpuRequest: "100m"
+  resources:gatewayCpuLimit: "500m"
+  resources:gatewayMemoryRequest: "128Mi"
+  resources:gatewayMemoryLimit: "256Mi"
+
+  # ── Secrets ───────────────────────────────────────────────────────────────────
+  # Clés non sensibles en clair, mots de passe via --secret :
+  #   pulumi config set --secret secrets:orderDbPassword     <password>
+  #   pulumi config set --secret secrets:inventoryDbPassword <password>
+  #   pulumi config set --secret secrets:rabbitmqPassword    <password>
+  secrets:orderDbUser: postgres
+  secrets:orderDbName: order_db
+  secrets:inventoryDbUser: postgres
+  secrets:inventoryDbName: inventory_db
+  secrets:rabbitmqUser: admin
+
+  # ── Observabilité ─────────────────────────────────────────────────────────────
+  # NodePorts ignorés en prod (IngressEnabled = true → services ClusterIP)
+  observability:otelVersion: "0.153.0"
+  observability:jaegerVersion: "1.76.0"
+  observability:prometheusVersion: "v3.11.3"
+  observability:grafanaVersion: "13.0.1-security-01"
+
+  # ── HPA — scaling automatique ─────────────────────────────────────────────────
+  hpa:orderApiEnabled: "true"
+  hpa:orderApiMin: "2"
+  hpa:orderApiMax: "10"
+  hpa:orderApiCpu: "70"
+
+  hpa:inventoryApiEnabled: "true"
+  hpa:inventoryApiMin: "2"
+  hpa:inventoryApiMax: "10"
+  hpa:inventoryApiCpu: "70"
+
+  hpa:gatewayEnabled: "true"
+  hpa:gatewayMin: "2"
+  hpa:gatewayMax: "5"
+  hpa:gatewayCpu: "70"

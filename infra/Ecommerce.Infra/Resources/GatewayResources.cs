@@ -14,6 +14,11 @@ public class GatewayResourcesArgs
     public Input<string> Namespace { get; set; } = "ecommerce";
     public Input<string> Image { get; set; } = "localhost/ecommerce/gateway:dev";
     public int NodePort { get; set; } = 30080;
+    /// <summary>
+    /// Quand true : Service ClusterIP (nginx-ingress gère l'exposition externe).
+    /// Quand false : Service NodePort — accès direct via localhost:NodePort (dev Kind).
+    /// </summary>
+    public bool IngressEnabled { get; set; } = false;
     public Input<string> OrderApiHost { get; set; } = "order-api";
     public Input<string> InventoryApiHost { get; set; } = "inventory-api";
     public Input<string> OtelEndpoint { get; set; } = "http://localhost:4317";
@@ -106,20 +111,24 @@ public class GatewayResources : ComponentResource
             }
         }, deploymentOpts);
 
+        // En prod (IngressEnabled) : ClusterIP — nginx-ingress route le trafic entrant.
+        // En dev (Kind) : NodePort — accès direct sur localhost:NodePort sans Ingress.
         var service = new Service("gateway-svc", new ServiceArgs
         {
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "gateway" },
-            Spec = new ServiceSpecArgs
-            {
-                Type     = "NodePort",
-                Selector = new InputMap<string> { ["app"] = "gateway" },
-                Ports    = new ServicePortArgs
-                {
-                    Port       = 8080,
-                    TargetPort = 8080,
-                    NodePort   = args.NodePort
-                }
-            }
+            Spec = args.IngressEnabled
+                ? new ServiceSpecArgs
+                  {
+                      Type     = "ClusterIP",
+                      Selector = new InputMap<string> { ["app"] = "gateway" },
+                      Ports    = new ServicePortArgs { Port = 8080, TargetPort = 8080 }
+                  }
+                : new ServiceSpecArgs
+                  {
+                      Type     = "NodePort",
+                      Selector = new InputMap<string> { ["app"] = "gateway" },
+                      Ports    = new ServicePortArgs { Port = 8080, TargetPort = 8080, NodePort = args.NodePort }
+                  }
         }, new CustomResourceOptions { Parent = this });
 
         if (args.Hpa.Enabled)

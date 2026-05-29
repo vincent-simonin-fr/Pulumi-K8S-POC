@@ -20,20 +20,25 @@ public class EcommerceStack : Stack
         var resourcesCfg    = new Config("resources");
         var secretsCfg      = new Config("secrets");
         var obsCfg          = new Config("observability");
+        var ingressCfg      = new Config("ingress");
 
-        var nodePort        = gatewayCfg.GetInt32("nodePort")        ?? 30080;
-        var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")    ?? 30030;
-        var jaegerNodePort  = obsCfg.GetInt32("jaegerNodePort")     ?? 30686;
+        var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
+        var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
+        var jaegerNodePort  = obsCfg.GetInt32("jaegerNodePort")   ?? 30686;
+        var ingressEnabled  = ingressCfg.GetBoolean("enabled")    ?? false;
+        var domain          = ingressCfg.Get("domain")            ?? "wizzz.com";
 
         // ── Observabilité (namespace monitoring — indépendant de ecommerce) ───
         var observability = new ObservabilityResources("observability", new ObservabilityResourcesArgs
         {
-            OtelCollectorVersion = obsCfg.Get("otelVersion")      ?? "0.102.0",
-            JaegerVersion        = obsCfg.Get("jaegerVersion")     ?? "1.58.0",
-            PrometheusVersion    = obsCfg.Get("prometheusVersion") ?? "v2.52.0",
-            GrafanaVersion       = obsCfg.Get("grafanaVersion")    ?? "11.1.0",
+            OtelCollectorVersion = obsCfg.Get("otelVersion")               ?? "0.153.0",
+            JaegerVersion        = obsCfg.Get("jaegerVersion")              ?? "1.76.0",
+            PrometheusVersion    = obsCfg.Get("prometheusVersion")          ?? "v3.11.3",
+            GrafanaVersion       = obsCfg.Get("grafanaVersion")             ?? "13.0.1-security-01",
             GrafanaNodePort      = grafanaNodePort,
-            JaegerUiNodePort     = jaegerNodePort
+            JaegerUiNodePort     = jaegerNodePort,
+            IngressEnabled       = ingressEnabled,
+            GrafanaAdminPassword = obsCfg.Get("grafanaAdminPassword")       ?? ""
         });
 
         // ── Namespace ─────────────────────────────────────────────────────────
@@ -128,6 +133,7 @@ public class EcommerceStack : Stack
             Namespace        = namespaceName,
             Image            = gatewayCfg.Get("image") ?? "localhost/ecommerce/gateway:dev",
             NodePort         = nodePort,
+            IngressEnabled   = ingressEnabled,
             OrderApiHost     = orderApi.ServiceName,
             InventoryApiHost = inventoryApi.ServiceName,
             OtelEndpoint     = observability.OtelCollectorEndpoint,
@@ -146,12 +152,36 @@ public class EcommerceStack : Stack
             }
         });
 
+        // ── Ingress (prod uniquement) ─────────────────────────────────────────
+        if (ingressEnabled)
+        {
+            _ = new IngressResources("ingress", new IngressResourcesArgs
+            {
+                Domain                       = domain,
+                AcmeEmail                    = ingressCfg.Get("acmeEmail")                    ?? "ops@wizzz.com",
+                MonitoringBasicAuthHtpasswd  = ingressCfg.Get("monitoringBasicAuthHtpasswd") ?? "",
+                CertManagerVersion           = ingressCfg.Get("certManagerVersion")           ?? "v1.16.2",
+                NginxVersion                 = ingressCfg.Get("nginxVersion")                 ?? "4.11.3"
+            });
+        }
+
         // ── Outputs ───────────────────────────────────────────────────────────
-        GatewayUrl            = Output.Create($"http://localhost:{nodePort}");
-        OrderApiHealthUrl     = Output.Create($"http://localhost:{nodePort}/health/orders");
-        InventoryApiHealthUrl = Output.Create($"http://localhost:{nodePort}/health/inventory");
-        GrafanaUrl            = Output.Create($"http://localhost:{grafanaNodePort}");
-        JaegerUrl             = Output.Create($"http://localhost:{jaegerNodePort}");
+        if (ingressEnabled)
+        {
+            GatewayUrl            = Output.Create($"https://{domain}");
+            OrderApiHealthUrl     = Output.Create($"https://{domain}/health");
+            InventoryApiHealthUrl = Output.Create($"https://{domain}/health");
+            GrafanaUrl            = Output.Create($"https://grafana.{domain}");
+            JaegerUrl             = Output.Create($"https://jaeger.{domain}");
+        }
+        else
+        {
+            GatewayUrl            = Output.Create($"http://localhost:{nodePort}");
+            OrderApiHealthUrl     = Output.Create($"http://localhost:{nodePort}/health/orders");
+            InventoryApiHealthUrl = Output.Create($"http://localhost:{nodePort}/health/inventory");
+            GrafanaUrl            = Output.Create($"http://localhost:{grafanaNodePort}");
+            JaegerUrl             = Output.Create($"http://localhost:{jaegerNodePort}");
+        }
     }
 
     [Output] public Output<string> GatewayUrl            { get; set; }

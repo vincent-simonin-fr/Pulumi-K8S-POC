@@ -21,9 +21,22 @@ public class ObservabilityResourcesArgs
     public string PrometheusVersion    { get; set; } = "v3.11.3";
     public string GrafanaVersion       { get; set; } = "13.0.1-security-01";
 
-    // NodePorts exposés sur l'hôte via Kind extraPortMappings
+    // NodePorts exposés sur l'hôte via Kind extraPortMappings (ignorés si IngressEnabled)
     public int GrafanaNodePort  { get; set; } = 30030;
     public int JaegerUiNodePort { get; set; } = 30686;
+
+    /// <summary>
+    /// Quand true : services Grafana et Jaeger en ClusterIP (nginx-ingress gère l'accès externe).
+    /// Quand false : NodePort — accès direct via localhost (dev Kind).
+    /// </summary>
+    public bool IngressEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Mot de passe admin Grafana — utilisé uniquement quand IngressEnabled = true.
+    /// En dev (IngressEnabled = false) l'auth anonyme est activée, ce champ est ignoré.
+    /// Stocker : pulumi config set --secret observability:grafanaAdminPassword &lt;password&gt;
+    /// </summary>
+    public string GrafanaAdminPassword { get; set; } = "";
 }
 
 public class ObservabilityResources : ComponentResource
@@ -225,21 +238,32 @@ service:
             }
         }, nsDep);
 
-        // Service Jaeger : NodePort pour l'UI (30686), accès interne pour OTLP (4317).
-        // K8s assigne un nodePort aléatoire pour le port 4317 — pas utilisé directement.
+        // Service Jaeger : port 4317 (OTLP interne, toujours ClusterIP).
+        // En dev : UI exposée en NodePort. En prod : UI exposée via nginx-ingress (ClusterIP).
         _ = new Service("jaeger-svc", new ServiceArgs
         {
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "jaeger" },
-            Spec = new ServiceSpecArgs
-            {
-                Type     = "NodePort",
-                Selector = new InputMap<string> { ["app"] = "jaeger" },
-                Ports = new List<ServicePortArgs>
-                {
-                    new() { Name = "otlp-grpc", Port = 4317,  TargetPort = 4317  },
-                    new() { Name = "ui",        Port = 16686, TargetPort = 16686, NodePort = args.JaegerUiNodePort }
-                }
-            }
+            Spec = args.IngressEnabled
+                ? new ServiceSpecArgs
+                  {
+                      Type     = "ClusterIP",
+                      Selector = new InputMap<string> { ["app"] = "jaeger" },
+                      Ports = new List<ServicePortArgs>
+                      {
+                          new() { Name = "otlp-grpc", Port = 4317,  TargetPort = 4317  },
+                          new() { Name = "ui",        Port = 16686, TargetPort = 16686 }
+                      }
+                  }
+                : new ServiceSpecArgs
+                  {
+                      Type     = "NodePort",
+                      Selector = new InputMap<string> { ["app"] = "jaeger" },
+                      Ports = new List<ServicePortArgs>
+                      {
+                          new() { Name = "otlp-grpc", Port = 4317,  TargetPort = 4317  },
+                          new() { Name = "ui",        Port = 16686, TargetPort = 16686, NodePort = args.JaegerUiNodePort }
+                      }
+                  }
         }, nsDep);
 
         // ── Prometheus ───────────────────────────────────────────────────────────
@@ -412,13 +436,20 @@ datasources:
                             Name            = "grafana",
                             Image           = $"grafana/grafana:{args.GrafanaVersion}",
                             ImagePullPolicy = "IfNotPresent",
-                            Env = new List<EnvVarArgs>
-                            {
-                                // Accès direct sans authentification — dev local uniquement
-                                new() { Name = "GF_AUTH_ANONYMOUS_ENABLED",  Value = "true"  },
-                                new() { Name = "GF_AUTH_ANONYMOUS_ORG_ROLE", Value = "Admin" },
-                                new() { Name = "GF_AUTH_DISABLE_LOGIN_FORM", Value = "true"  }
-                            },
+                            // Dev : auth anonyme (pas de login). Prod : login natif Grafana.
+                            Env = args.IngressEnabled
+                                ? new List<EnvVarArgs>
+                                  {
+                                      new() { Name = "GF_AUTH_ANONYMOUS_ENABLED",  Value = "false" },
+                                      new() { Name = "GF_SECURITY_ADMIN_USER",     Value = "admin" },
+                                      new() { Name = "GF_SECURITY_ADMIN_PASSWORD", Value = args.GrafanaAdminPassword }
+                                  }
+                                : new List<EnvVarArgs>
+                                  {
+                                      new() { Name = "GF_AUTH_ANONYMOUS_ENABLED",  Value = "true"  },
+                                      new() { Name = "GF_AUTH_ANONYMOUS_ORG_ROLE", Value = "Admin" },
+                                      new() { Name = "GF_AUTH_DISABLE_LOGIN_FORM", Value = "true"  }
+                                  },
                             Ports        = new ContainerPortArgs { Name = "http", ContainerPortValue = 3000 },
                             VolumeMounts = new List<VolumeMountArgs>
                             {
@@ -452,18 +483,19 @@ datasources:
         _ = new Service("grafana-svc", new ServiceArgs
         {
             Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = "grafana" },
-            Spec = new ServiceSpecArgs
-            {
-                Type     = "NodePort",
-                Selector = new InputMap<string> { ["app"] = "grafana" },
-                Ports    = new ServicePortArgs
-                {
-                    Name       = "http",
-                    Port       = 3000,
-                    TargetPort = 3000,
-                    NodePort   = args.GrafanaNodePort
-                }
-            }
+            Spec = args.IngressEnabled
+                ? new ServiceSpecArgs
+                  {
+                      Type     = "ClusterIP",
+                      Selector = new InputMap<string> { ["app"] = "grafana" },
+                      Ports    = new ServicePortArgs { Name = "http", Port = 3000, TargetPort = 3000 }
+                  }
+                : new ServiceSpecArgs
+                  {
+                      Type     = "NodePort",
+                      Selector = new InputMap<string> { ["app"] = "grafana" },
+                      Ports    = new ServicePortArgs { Name = "http", Port = 3000, TargetPort = 3000, NodePort = args.GrafanaNodePort }
+                  }
         }, nsDep);
 
         // ── kube-state-metrics ───────────────────────────────────────────────────

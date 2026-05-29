@@ -59,6 +59,9 @@ config:
   # secrets:inventoryDbPassword: <chiffré par pulumi config set --secret>
   # secrets:rabbitmqPassword: <chiffré par pulumi config set --secret>
 
+  # Ingress — désactivé en dev (NodePorts utilisés directement)
+  ingress:enabled: "false"
+
   # Observabilite — OTel Collector + Jaeger + Prometheus + Grafana
   # NodePorts exposes sur l'hote via Kind extraPortMappings (kind-config.yaml).
   observability:grafanaNodePort:   "30030"
