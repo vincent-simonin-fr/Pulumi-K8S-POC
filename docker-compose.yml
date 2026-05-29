@@ -12,6 +12,7 @@ volumes:
   inventory-db-data:
   rabbitmq-data:
   prometheus-data:
+  redis-data:
 
 services:
   # ── Bases de données ────────────────────────────────────────────────────────
@@ -49,6 +50,23 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
+      retries: 5
+    networks:
+      - ecommerce-net
+
+  # ── Cache ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 5
     networks:
       - ecommerce-net
@@ -107,6 +125,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__InventoryDb: "Host=inventory-db;Port=5432;Database=inventory_db;Username=postgres;Password=postgres"
+      ConnectionStrings__Redis: "redis:6379"
       RabbitMQ__Host: rabbitmq
       RabbitMQ__VirtualHost: /
       RabbitMQ__Username: guest
@@ -120,6 +139,8 @@ services:
       inventory-db:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - ecommerce-net

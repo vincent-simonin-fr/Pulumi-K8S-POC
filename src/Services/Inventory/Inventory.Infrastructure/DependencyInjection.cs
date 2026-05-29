@@ -24,6 +24,25 @@ public static class DependencyInjection
         services.AddScoped<IApplicationDbContext>(p =>
             p.GetRequiredService<ApplicationDbContext>());
 
+        // ── Cache distribué ───────────────────────────────────────────────────
+        // Redis si la connection string est configurée, MemoryCache sinon (dev local).
+        // La même interface IDistributedCache est utilisée partout — aucun code
+        // applicatif ne connaît l'implémentation sous-jacente.
+        var redisCs = configuration.GetConnectionString("Redis");
+        if (!string.IsNullOrWhiteSpace(redisCs))
+        {
+            services.AddStackExchangeRedisCache(opts =>
+            {
+                opts.Configuration = redisCs;
+                opts.InstanceName   = "inventory:";   // préfixe toutes les clés Redis
+            });
+        }
+        else
+        {
+            // Fallback pour dev local sans Redis (podman-compose, tests)
+            services.AddDistributedMemoryCache();
+        }
+
         // ── MassTransit / RabbitMQ ────────────────────────────────────────────
         services.AddMassTransit(x =>
         {

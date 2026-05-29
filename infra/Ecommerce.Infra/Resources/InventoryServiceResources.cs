@@ -16,6 +16,7 @@ public class InventoryServiceResourcesArgs
     public Input<string> InventoryDbHost { get; set; } = "inventory-db";
     public Input<string> RabbitMqHost { get; set; } = "rabbitmq";
     public Input<string> OtelEndpoint { get; set; } = "http://localhost:4317";
+    public Input<string> RedisConnectionString { get; set; } = "redis:6379";
     public int ReservationTtlMinutes { get; set; } = 10;
     public int CheckIntervalSeconds { get; set; } = 30;
     public int Replicas { get; set; } = 1;
@@ -206,11 +207,12 @@ public class InventoryServiceResources : ComponentResource
     // sont injectées via EnvFrom sur les secrets ESO ci-dessus.
     private static List<EnvVarArgs> BuildEnvVars(InventoryServiceResourcesArgs args) =>
     [
-        new() { Name = "ASPNETCORE_ENVIRONMENT",           Value = "Production"                           },
-        new() { Name = "RabbitMQ__Host",                   Value = args.RabbitMqHost                     },
-        new() { Name = "RabbitMQ__VirtualHost",            Value = "/"                                    },
-        new() { Name = "Reservation__TtlMinutes",          Value = args.ReservationTtlMinutes.ToString() },
-        new() { Name = "Reservation__CheckIntervalSeconds",Value = args.CheckIntervalSeconds.ToString()  },
-        new() { Name = "OpenTelemetry__Endpoint",          Value = args.OtelEndpoint                     }
+        new() { Name = "ASPNETCORE_ENVIRONMENT",            Value = "Production"                           },
+        new() { Name = "RabbitMQ__Host",                    Value = args.RabbitMqHost                     },
+        new() { Name = "RabbitMQ__VirtualHost",             Value = "/"                                    },
+        new() { Name = "Reservation__TtlMinutes",           Value = args.ReservationTtlMinutes.ToString() },
+        new() { Name = "Reservation__CheckIntervalSeconds", Value = args.CheckIntervalSeconds.ToString()  },
+        new() { Name = "OpenTelemetry__Endpoint",           Value = args.OtelEndpoint                     },
+        new() { Name = "ConnectionStrings__Redis",          Value = args.RedisConnectionString            }
     ];
 }

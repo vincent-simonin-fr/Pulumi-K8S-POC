@@ -1,6 +1,8 @@
+using Inventory.Application.Common;
 using Inventory.Application.Common.Interfaces;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace Inventory.Api.Endpoints;
 
@@ -12,8 +14,22 @@ public static class ProductEndpoints
             .WithTags("Products");
 
         // GET /api/products
-        group.MapGet("/", async (IApplicationDbContext db, CancellationToken ct) =>
+        // Cache-aside pattern : Redis → PostgreSQL (fallback gracieux si Redis indisponible)
+        group.MapGet("/", async (IApplicationDbContext db, IDistributedCache cache, CancellationToken ct) =>
         {
+            // ── 1. Cache hit ──────────────────────────────────────────────────
+            try
+            {
+                var cached = await cache.GetStringAsync(CacheKeys.ProductsAll, ct);
+                if (cached is not null)
+                    return Results.Content(cached, "application/json");
+            }
+            catch
+            {
+                // Redis indisponible → on passe directement à la base
+            }
+
+            // ── 2. Cache miss → base de données ──────────────────────────────
             var products = await db.Products
                 .AsNoTracking()
                 .Select(p => new
@@ -26,6 +42,29 @@ public static class ProductEndpoints
                     p.AvailableQuantity
                 })
                 .ToListAsync(ct);
+
+            // ── 3. Écriture en cache ──────────────────────────────────────────
+            try
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(products,
+                    new System.Text.Json.JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                    });
+
+                await cache.SetStringAsync(
+                    CacheKeys.ProductsAll,
+                    json,
+                    new DistributedCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = CacheTtl.Products
+                    },
+                    ct);
+            }
+            catch
+            {
+                // Redis indisponible → on retourne la réponse sans mise en cache
+            }
 
             return Results.Ok(products);
         })

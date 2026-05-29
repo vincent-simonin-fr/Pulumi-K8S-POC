@@ -1,8 +1,10 @@
 using Ecommerce.Contracts.Events;
+using Inventory.Application.Common;
 using Inventory.Domain.Enums;
 using Inventory.Infrastructure.Persistence;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -14,9 +16,11 @@ namespace Inventory.Infrastructure.BackgroundServices;
 /// Service de fond qui détecte les réservations expirées, libère le stock
 /// et publie un ProductReservationExpiredEvent vers OrderApi.
 /// L'intervalle de vérification est configurable via Reservation:CheckIntervalSeconds.
+/// Invalide également le cache produits après chaque libération de stock.
 /// </summary>
 public sealed class ReservationExpiryService(
     IServiceScopeFactory scopeFactory,
+    IDistributedCache cache,
     IConfiguration configuration,
     ILogger<ReservationExpiryService> logger) : BackgroundService
 {
@@ -85,5 +89,16 @@ public sealed class ReservationExpiryService(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Invalider le cache produits : availableQuantity a augmenté pour plusieurs produits
+        try
+        {
+            await cache.RemoveAsync(CacheKeys.ProductsAll, cancellationToken);
+            logger.LogDebug("Cache '{Key}' invalidated after {Count} expiry(ies).", CacheKeys.ProductsAll, expiredReservations.Count);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to invalidate cache '{Key}' — will expire naturally.", CacheKeys.ProductsAll);
+        }
     }
 }

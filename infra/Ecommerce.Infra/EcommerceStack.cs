@@ -68,7 +68,7 @@ public class EcommerceStack : Stack
 
         var secretsDep = new ComponentResourceOptions { DependsOn = { secretsResources } };
 
-        // ── Infrastructure (PostgreSQL + RabbitMQ) ────────────────────────────
+        // ── Infrastructure (PostgreSQL + RabbitMQ + Redis) ────────────────────
         var dbResources = new DatabaseResources("databases", new DatabaseResourcesArgs
         {
             Namespace = namespaceName,
@@ -80,6 +80,11 @@ public class EcommerceStack : Stack
             Namespace = namespaceName,
             Replicas  = replicasCfg.GetInt32("rabbitmq") ?? 1
         }, secretsDep);
+
+        var cacheResources = new CacheResources("cache", new CacheResourcesArgs
+        {
+            Namespace = namespaceName
+        });
 
         // ── Services applicatifs ──────────────────────────────────────────────
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
@@ -111,6 +116,7 @@ public class EcommerceStack : Stack
             InventoryDbHost       = dbResources.InventoryDbServiceName,
             RabbitMqHost          = mqResources.RabbitMqServiceName,
             OtelEndpoint          = observability.OtelCollectorEndpoint,
+            RedisConnectionString = cacheResources.RedisConnectionString,
             ReservationTtlMinutes = reservationCfg.GetInt32("ttlMinutes") ?? 10,
             CheckIntervalSeconds  = reservationCfg.GetInt32("checkIntervalSeconds") ?? 30,
             Replicas              = replicasCfg.GetInt32("inventoryApi") ?? 1,

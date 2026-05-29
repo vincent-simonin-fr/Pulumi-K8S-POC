@@ -6,6 +6,7 @@ using Pulumi.Kubernetes.Types.Inputs.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Helm.V3;
 using Pulumi.Kubernetes.Types.Inputs.Meta.V1;
 using Pulumi.Kubernetes.Types.Inputs.Networking.V1;
+using Pulumi.Kubernetes.Types.Inputs.Yaml.V2;
 using Pulumi.Kubernetes.Yaml.V2;
 
 namespace Ecommerce.Infra.Resources;
@@ -119,23 +120,21 @@ public class IngressResources : ComponentResource
         // ⚠️  Le domaine doit être résolvable publiquement et pointer vers l'IP du LoadBalancer.
         var issuer = new ConfigGroup("letsencrypt-issuer", new ConfigGroupArgs
         {
-            Yaml = new InputList<string>
-            {
-                $@"apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: {args.AcmeEmail}
-    privateKeySecretRef:
-      name: letsencrypt-prod-key
-    solvers:
-    - http01:
-        ingress:
-          class: nginx"
-            }
+            // V2 : Yaml est un Input<string> (document unique, pas une liste)
+            Yaml = $@"apiVersion: cert-manager.io/v1
+                        kind: ClusterIssuer
+                        metadata:
+                          name: letsencrypt-prod
+                        spec:
+                          acme:
+                            server: https://acme-v02.api.letsencrypt.org/directory
+                            email: {args.AcmeEmail}
+                            privateKeySecretRef:
+                              name: letsencrypt-prod-key
+                            solvers:
+                            - http01:
+                                ingress:
+                                  class: nginx"
         }, new ComponentResourceOptions { Parent = this, DependsOn = new Resource[] { certManager } });
 
         // ── Secret basic-auth monitoring ──────────────────────────────────────────
