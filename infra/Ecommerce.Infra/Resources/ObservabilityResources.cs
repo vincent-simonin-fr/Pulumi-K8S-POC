@@ -325,7 +325,12 @@ scrape_configs:
                             Args = new[]
                             {
                                 "--config.file=/etc/prometheus/prometheus.yml",
-                                "--storage.tsdb.retention.time=7d"
+                                "--storage.tsdb.retention.time=7d",
+                                // Active le receiver remote write — utilisé par k6 pour pousser
+                                // ses métriques de charge directement dans Prometheus.
+                                // Les métriques k6 (k6_http_req_duration_*, k6_vus, ...)
+                                // sont alors corrélables avec les métriques applicatives dans Grafana.
+                                "--web.enable-remote-write-receiver"
                             },
                             Ports        = new ContainerPortArgs { Name = "http", ContainerPortValue = 9090 },
                             VolumeMounts = new VolumeMountArgs { Name = "config", MountPath = "/etc/prometheus" },

@@ -17,6 +17,7 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 | [Debugging](docs/debugging.md) | VS 2022 + Pulumi, `kubectl` diagnostics, problèmes courants |
 | [Dev local & Tests](docs/dev-local.md) | `podman-compose`, tests d'intégration, migrations EF Core, OpenAPI, observabilité |
 | [k9s](docs/k9s.md) | Interface terminal Kubernetes — logs, shell, describe sans Dashboard |
+| [Tests de charge](docs/load-testing.md) | k6 — scénarios baseline/load/stress/spike, intégration Prometheus |
 
 ---
 
