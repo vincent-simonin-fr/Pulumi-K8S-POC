@@ -317,6 +317,22 @@ scrape_configs:
         replacement: inventory-db
   # Note : le chart CNPG 0.22.0 n'expose pas de service de métriques pour l'opérateur.
   # cnpg-controller-manager-metrics-service n'existe pas dans cnpg-system.
+
+  # ── Argo CD — métriques des composants GitOps ────────────────────────────
+  # Le chart active les services *-metrics quand metrics.enabled=true (ArgocdResources.cs).
+  # Métriques clés : argocd_app_info, argocd_app_sync_total, argocd_git_request_duration_seconds
+  - job_name: argocd-server
+    static_configs:
+      - targets: ['argocd-server-metrics.argocd.svc.cluster.local:8083']
+  - job_name: argocd-repo-server
+    static_configs:
+      - targets: ['argocd-repo-server-metrics.argocd.svc.cluster.local:8084']
+  - job_name: argocd-application-controller
+    static_configs:
+      - targets: ['argocd-application-controller-metrics.argocd.svc.cluster.local:8082']
+  - job_name: argocd-applicationset-controller
+    static_configs:
+      - targets: ['argocd-applicationset-controller-metrics.argocd.svc.cluster.local:8080']
 "
             }
         }, nsDep);

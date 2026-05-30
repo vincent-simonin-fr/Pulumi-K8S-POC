@@ -37,8 +37,9 @@ kind load docker-image redis:7-alpine --name ecommerce
 :: Images CNPG : operateur + image PostgreSQL 16 bookworm.
 :: Pre-charger pour eviter les timeouts lors du Helm install et de l'initdb CNPG.
 :: L'image bookworm (non alpine) est la seule supportee par CNPG.
-podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0
-kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
+:: chart 0.23.2 = operateur 1.25.1
+podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.25.1
+kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.25.1 --name ecommerce
 podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
 kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
 :: PgBouncer image utilisee par le Pooler CNPG (version distincte de l'operateur)
@@ -66,7 +67,7 @@ kind load docker-image quay.io/prometheus/node-exporter:v1.9.1 --name ecommerce
 
 :: ------------------------------------------------------------------
 echo.
-echo [3b/5] Images KEDA (operator + metrics-server + webhooks)...
+echo [3b/5] Images KEDA + Metrics Server...
 :: ------------------------------------------------------------------
 :: Pre-charger les images KEDA dans Kind AVANT pulumi up.
 :: Sans pre-chargement, Kind tire depuis ghcr.io pendant le Helm install
@@ -78,6 +79,13 @@ podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0
 kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
 podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0
 kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
+
+:: Metrics Server (chart 3.12.2 = app v0.7.2)
+:: Gere automatiquement par Pulumi (MetricsServerResources.cs) — image pre-chargee ici
+:: pour eviter les pulls depuis registry.k8s.io pendant pulumi up (connexions lentes).
+:: Sur Kind, --kubelet-insecure-tls est active via Pulumi.dev.yaml (metricsServer:kubeletInsecureTls).
+podman pull registry.k8s.io/metrics-server/metrics-server:v0.7.2
+kind load docker-image registry.k8s.io/metrics-server/metrics-server:v0.7.2 --name ecommerce
 
 :: ------------------------------------------------------------------
 echo.
@@ -107,9 +115,13 @@ popd
 echo.
 echo ==============================================
 echo  Deploiement termine !
-echo  Gateway  -^> http://localhost:30080
-echo  Grafana  -^> http://localhost:30030
-echo  Jaeger   -^> http://localhost:30686
+echo  Gateway    -^> http://localhost:30080
+echo  Grafana    -^> http://localhost:30030
+echo  Jaeger     -^> http://localhost:30686
+echo  Argo CD    -^> kubectl port-forward -n argocd svc/argocd-server 8080:80
+echo                    then http://localhost:8080
+echo  HPA        -^> kubectl get hpa -n ecommerce  (metriques CPU via Metrics Server)
+echo  Top        -^> kubectl top pods -n ecommerce
 echo ==============================================
 
 endlocal

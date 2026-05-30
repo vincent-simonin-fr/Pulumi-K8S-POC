@@ -22,8 +22,10 @@ public class EcommerceStack : Stack
         var obsCfg          = new Config("observability");
         var ingressCfg      = new Config("ingress");
         var presaleCfg      = new Config("presale");
-        var kedaCfg         = new Config("keda");
-        var cnpgCfg         = new Config("cnpg");
+        var kedaCfg          = new Config("keda");
+        var cnpgCfg          = new Config("cnpg");
+        var argocdCfg        = new Config("argocd");
+        var metricsServerCfg = new Config("metricsServer");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -51,6 +53,16 @@ public class EcommerceStack : Stack
             presaleEnabled
                 ? (presaleCfg.GetInt32("inventoryApiMin") ?? fallback)
                 : (kedaCfg.GetInt32("inventoryApiMin") ?? 1);
+
+        // ── Metrics Server (kube-system — requis par HPA CPU et kubectl top) ────
+        // Doit être déployé avant les HPA pour que les métriques CPU soient disponibles.
+        // Sur Kind, --kubelet-insecure-tls est obligatoire (certs kubelets sans IP SANs).
+        // En prod, passer metricsServer:kubeletInsecureTls false dans Pulumi.prod.yaml.
+        _ = new MetricsServerResources("metrics-server", new MetricsServerResourcesArgs
+        {
+            Version            = metricsServerCfg.Get("version") ?? "3.12.2",
+            KubeletInsecureTls = metricsServerCfg.GetBoolean("kubeletInsecureTls") ?? true
+        });
 
         // ── Observabilité (namespace monitoring — indépendant de ecommerce) ───
         var observability = new ObservabilityResources("observability", new ObservabilityResourcesArgs
@@ -103,7 +115,7 @@ public class EcommerceStack : Stack
         // Voir CnpgResources.cs pour le détail du workaround GVK cache.
         var cnpgResources = new CnpgResources("cnpg", new CnpgResourcesArgs
         {
-            Version = cnpgCfg.Get("version") ?? "0.22.0"
+            Version = cnpgCfg.Get("version") ?? "0.23.2"
         });
 
         // DependsOn combiné : secrets (pour postgres_exporter) + CNPG (pour CRDs).
@@ -229,6 +241,23 @@ public class EcommerceStack : Stack
             }
         });
 
+        // ── Argo CD (GitOps CD) ───────────────────────────────────────────────
+        // Déployé dans le namespace "argocd", indépendant de la stack ecommerce.
+        // Accès dev : kubectl port-forward -n argocd svc/argocd-server 8080:80
+        //             → http://localhost:8080
+        // Accès prod : https://argocd.{domain} (ingress nginx + cert-manager)
+        // CLI       : argocd login localhost:8080 --username admin --insecure
+        var argocd = new ArgocdResources("argocd", new ArgocdResourcesArgs
+        {
+            Version                = argocdCfg.Get("version")                 ?? "7.8.3",
+            Domain                 = domain,
+            IngressEnabled         = ingressEnabled,
+            AdminPasswordBcrypt    = argocdCfg.Get("adminPasswordHash")        ?? "",
+            ServerReplicas         = argocdCfg.GetInt32("serverReplicas")         ?? 1,
+            RepoServerReplicas     = argocdCfg.GetInt32("repoServerReplicas")     ?? 1,
+            ApplicationSetReplicas = argocdCfg.GetInt32("applicationSetReplicas") ?? 1
+        });
+
         // ── Ingress (prod uniquement) ─────────────────────────────────────────
         if (ingressEnabled)
         {
@@ -250,6 +279,7 @@ public class EcommerceStack : Stack
             InventoryApiHealthUrl = Output.Create($"https://{domain}/health");
             GrafanaUrl            = Output.Create($"https://grafana.{domain}");
             JaegerUrl             = Output.Create($"https://jaeger.{domain}");
+            ArgocdUrl             = Output.Create($"https://argocd.{domain}");
         }
         else
         {
@@ -258,6 +288,7 @@ public class EcommerceStack : Stack
             InventoryApiHealthUrl = Output.Create($"http://localhost:{nodePort}/health/inventory");
             GrafanaUrl            = Output.Create($"http://localhost:{grafanaNodePort}");
             JaegerUrl             = Output.Create($"http://localhost:{jaegerNodePort}");
+            ArgocdUrl             = Output.Create("http://localhost:8080 (kubectl port-forward -n argocd svc/argocd-server 8080:80)");
         }
     }
 
@@ -266,4 +297,5 @@ public class EcommerceStack : Stack
     [Output] public Output<string> InventoryApiHealthUrl { get; set; }
     [Output] public Output<string> GrafanaUrl            { get; set; }
     [Output] public Output<string> JaegerUrl             { get; set; }
+    [Output] public Output<string> ArgocdUrl             { get; set; }
 }

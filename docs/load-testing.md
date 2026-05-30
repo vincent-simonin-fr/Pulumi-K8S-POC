@@ -69,21 +69,21 @@ k6 run --out experimental-prometheus-rw \
 
 **Quand** : avant tout autre test, après chaque déploiement.
 
-| Paramètre | Valeur |
-|---|---|
-| VU | 1 |
-| Durée | 2 min |
-| Charge | GET /inventory + POST /orders alternés |
-| SLOs | p(95) < 500ms, errors < 1% |
+| Paramètre | Valeur                                 |
+| --------- | -------------------------------------- |
+| VU        | 1                                      |
+| Durée     | 2 min                                  |
+| Charge    | GET /inventory + POST /orders alternés |
+| SLOs      | p(95) < 500ms, errors < 1%             |
 
 ### load.js — Charge nominale
 
 **Quand** : validation du comportement sous charge réaliste.
 
-| Étape | VU | Durée |
-|---|---|---|
-| Warm-up | 0 → 50 | 2 min |
-| Maintien | 50 | 5 min |
+| Étape     | VU     | Durée |
+| --------- | ------ | ----- |
+| Warm-up   | 0 → 50 | 2 min |
+| Maintien  | 50     | 5 min |
 | Cool-down | 50 → 0 | 1 min |
 
 Charge : 80% `GET /inventory` + 20% `POST /orders`.
@@ -92,13 +92,13 @@ Charge : 80% `GET /inventory` + 20% `POST /orders`.
 
 **Quand** : dimensionnement du cluster, validation de l'HPA.
 
-| Étape | VU | Durée |
-|---|---|---|
-| Palier 1 | 0 → 50 | 2 min |
-| Palier 2 | 50 → 100 | 2 min |
-| Palier 3 | 100 → 150 | 2 min |
-| Palier 4 | 150 → 200 | 2 min |
-| Récupération | 200 → 0 | 2 min |
+| Étape        | VU        | Durée |
+| ------------ | --------- | ----- |
+| Palier 1     | 0 → 50    | 2 min |
+| Palier 2     | 50 → 100  | 2 min |
+| Palier 3     | 100 → 150 | 2 min |
+| Palier 4     | 150 → 200 | 2 min |
+| Récupération | 200 → 0   | 2 min |
 
 SLOs assouplis (p95 < 2s, errors < 10%) — l'objectif est d'observer la dégradation, pas de la masquer.
 
@@ -106,19 +106,20 @@ SLOs assouplis (p95 < 2s, errors < 10%) — l'objectif est d'observer la dégrad
 
 **Quand** : simulation d'un pic de trafic soudain (promo, événement).
 
-| Étape | VU | Durée |
-|---|---|---|
-| Stable | 1 | 30s |
-| Spike | 1 → 300 | 10s |
-| Maintien pic | 300 | 1 min |
-| Retour | 300 → 1 | 10s |
-| Récupération | 1 | 1 min |
+| Étape        | VU      | Durée |
+| ------------ | ------- | ----- |
+| Stable       | 1       | 30s   |
+| Spike        | 1 → 300 | 10s   |
+| Maintien pic | 300     | 1 min |
+| Retour       | 300 → 1 | 10s   |
+| Récupération | 1       | 1 min |
 
 **Comportement avec KEDA** : dès que les messages `ProductAddedToCartEvent` s'accumulent dans la queue RabbitMQ, KEDA détecte la profondeur (poll toutes les 5 s) et scale-out inventory-api. Réaction ~5 s vs ~75 s avec HPA CPU.
 
 **Comportement avec Redis** : les requêtes `GET /inventory` sont servies depuis le cache pendant le pic — soulagement du pool PostgreSQL d'inventory-db.
 
 **Mode presale** (recommandé avant un vrai flash sale) :
+
 ```bash
 scripts\presale.cmd start   # pré-scale avant le pic → pods déjà chauds
 k6 run tests/Ecommerce.LoadTests/scenarios/spike.js
@@ -158,8 +159,7 @@ La colonne `TARGETS` affiche `<messages>/<seuil>` (ex. `35/5` → KEDA va scaler
 
 ```bash
 # Profondeur en direct (toutes les 2 s) — via rabbitmqctl dans le pod
-kubectl exec -n ecommerce deploy/rabbitmq -- watch -n 2 \
-  "rabbitmqctl list_queues name messages consumers --formatter=pretty_table 2>/dev/null"
+kubectl exec -it -n ecommerce deploy/rabbitmq -- sh -c "TERM=xterm watch -n 2 'rabbitmqctl list_queues name messages consumers --formatter=pretty_table'"
 ```
 
 > **RabbitMQ Management UI** : `http://localhost:15672` → onglet **Queues** → `product-added-to-cart`  
@@ -184,13 +184,13 @@ k6 run --out experimental-prometheus-rw \
 
 Les métriques k6 apparaissent dans Prometheus avec le préfixe `k6_` :
 
-| Métrique k6 | Description |
-|---|---|
-| `k6_vus` | Utilisateurs virtuels actifs |
-| `k6_http_reqs_total` | Requêtes totales |
+| Métrique k6                    | Description                       |
+| ------------------------------ | --------------------------------- |
+| `k6_vus`                       | Utilisateurs virtuels actifs      |
+| `k6_http_reqs_total`           | Requêtes totales                  |
 | `k6_http_req_duration_seconds` | Distribution des temps de réponse |
-| `k6_http_req_failed_total` | Requêtes en erreur |
-| `k6_http_req_blocked_seconds` | Temps bloqué (connexion TCP) |
+| `k6_http_req_failed_total`     | Requêtes en erreur                |
+| `k6_http_req_blocked_seconds`  | Temps bloqué (connexion TCP)      |
 
 ---
 
@@ -199,19 +199,23 @@ Les métriques k6 apparaissent dans Prometheus avec le préfixe `k6_` :
 Ouvrir Grafana (http://localhost:30030) **pendant** l'exécution du test.
 
 ### Dashboard Services — RED Metrics
+
 - **Request rate** : doit augmenter proportionnellement aux VU
 - **Error rate 5xx** : doit rester < 1% en LoadScenario
 - **P95 Latency** : doit rester < 500ms en LoadScenario
 
 ### Dashboard .NET Runtime
+
 - **Thread pool queue length** : si > 0, saturation du thread pool
 - **GC Gen2 / min** : si augmente fortement, pression mémoire excessive
 - **Working set memory** : ne doit pas croître indéfiniment (memory leak)
 
 ### Dashboard PostgreSQL
+
 - **Connexions actives** : ne doit pas atteindre `max_connections` (100 par défaut)
 - **Cache hit ratio** : doit rester > 95% même sous charge
 
 ### Dashboard Kubernetes
+
 - **HPA current / desired** : le HPA doit scaler avant la saturation
 - **Pod restarts** : des restarts = OOMKill (augmenter les memory limits)

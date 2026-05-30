@@ -87,12 +87,21 @@ config:
   presale:orderApiMin: "3"       # pods order-api en attente du pic
   presale:gatewayMin: "2"        # pods gateway en attente du pic
 
+  # ── Metrics Server — métriques CPU/mémoire pour HPA et kubectl top ─────
+  # Installé automatiquement par Pulumi via Helm (MetricsServerResources.cs).
+  # Plus besoin d'étape manuelle post-déploiement.
+  #
+  # kubeletInsecureTls : true  = dev Kind (kubelets sans IP SANs dans les certs TLS)
+  #                      false = prod     (kubelets avec certs signés par le cluster CA)
+  #
+  # Version du chart Helm : 3.12.2 → Metrics Server v0.7.2
+  # Correspondances : https://github.com/kubernetes-sigs/metrics-server/releases
+  metricsServer:version: "3.12.2"
+  metricsServer:kubeletInsecureTls: "true"
+
   # HPA — HorizontalPodAutoscaler (order-api + gateway uniquement)
   # inventory-api est géré par KEDA (voir section keda ci-dessous) — pas de HPA natif.
-  # Requiert le Metrics Server dans le cluster :
-  #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-  #   kubectl patch deployment metrics-server -n kube-system --type=json \
-  #     -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+  # Le Metrics Server ci-dessus est obligatoire pour que les métriques CPU soient lisibles.
   hpa:orderApiEnabled: "true"
   hpa:orderApiMin: "1"
   hpa:orderApiMax: "4"
@@ -117,10 +126,10 @@ config:
   #
   # cnpg:version = VERSION DU CHART HELM (pas de l'opérateur).
   # Correspondance chart => opérateur :
-  #   0.22.0 => opérateur 1.24.0  (image: ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0)
-  #   0.23.x => opérateur 1.25.x
-  #   0.28.x => opérateur 1.29.x  (latest)
-  cnpg:version: "0.22.0"
+  #   0.22.0 => opérateur 1.24.0  (BUG: efface le mot de passe postgres à chaque reconciliation)
+  #   0.23.x => opérateur 1.25.x  (bug corrigé)
+  #   0.28.x => opérateur 1.29.x  (latest stable)
+  cnpg:version: "0.23.2"
   cnpg:orderInstances: "1"        # pods postgres order-db   (dev=1, prod=3)
   cnpg:inventoryInstances: "1"    # pods postgres inventory-db
   cnpg:poolerInstances: "1"       # pods PgBouncer par cluster (dev=1, prod=2)
@@ -145,3 +154,30 @@ config:
   keda:pollingInterval: "5"      # secondes entre chaque lecture de la queue
   keda:cooldownPeriod: "60"      # secondes d'inactivité avant que KEDA demande le scale-in au HPA
   keda:scaleDownWindow: "240"    # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)
+
+  # ── Argo CD — GitOps Continuous Delivery ────────────────────────────────
+  # Argo CD surveille un repo Git et réconcilie l'état du cluster.
+  # Accès dev : kubectl port-forward -n argocd svc/argocd-server 8080:80
+  #             → http://localhost:8080  (admin / voir argocd-initial-admin-secret)
+  # Accès prod : https://argocd.{ingress:domain}
+  #
+  # Mot de passe admin (production) :
+  #   Générer le hash : htpasswd -nbBC 10 "" monMotDePasse | tr -d ':\n'
+  #   Définir         : pulumi config set --secret argocd:adminPasswordHash <hash>
+  #   Sans cette clé  : Argo CD génère un mot de passe aléatoire au premier démarrage.
+  #                     kubectl -n argocd get secret argocd-initial-admin-secret \
+  #                       -o jsonpath="{.data.password}" | base64 -d
+  #
+  # Scaling prod HA (multi-nœuds) :
+  #   argocd:serverReplicas: "2"         → UI + API stateless
+  #   argocd:repoServerReplicas: "2"     → clone Git, render Helm/Kustomize
+  #   argocd:applicationSetReplicas: "2" → leader election intégré
+  #
+  # Correspondance chart → Argo CD :
+  #   7.7.x → Argo CD 2.13.x
+  #   7.8.x → Argo CD 2.14.x
+  argocd:version: "7.8.3"
+  argocd:serverReplicas: "1"              # dev=1 | prod HA=2
+  argocd:repoServerReplicas: "1"          # dev=1 | prod HA=2
+  argocd:applicationSetReplicas: "1"      # dev=1 | prod HA=2
+  # argocd:adminPasswordHash: ""          # bcrypt hash — utiliser --secret en production

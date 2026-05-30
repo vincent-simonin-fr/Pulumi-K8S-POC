@@ -48,12 +48,11 @@ public class DatabaseResourcesArgs
 /// User PostgreSQL :
 ///   Le user 'app' (owner de la base) est utilisé pour toutes les connexions applicatives.
 ///   Son mot de passe est défini au initdb via postInitSQL et corresponde à OrderDbPassword.
-///   CNPG gère le superuser 'postgres' de façon autonome (Secret order-db-superuser auto-créé).
-///   Le Pooler utilise order-db-superuser pour l'authQuery (SELECT depuis pg_shadow).
-///
-///   ⚠️ CNPG 1.24.0 bug : quand superuserSecret est fourni, la réconciliation CNPG
-///   efface périodiquement le mot de passe postgres (ALTER ROLE avec valeur nulle).
-///   Workaround : ne pas fournir superuserSecret — laisser CNPG gérer autonomement.
+///   Le user 'postgres' (superuser) est géré via superuserSecret ({cluster}-superuser-config).
+///   CNPG lit ce secret, définit le mot de passe postgres dans PostgreSQL et le maintient
+///   en sync à chaque réconciliation. Le Pooler utilise ce même secret pour l'authQuery.
+///   Sans superuserSecret, CNPG génère un mot de passe aléatoire et le régénère
+///   périodiquement (race condition → password NULL → server_login_retry).
 ///
 /// Workaround GVK cache Pulumi :
 ///   Identique à KedaResources : les CRDs CNPG (Cluster, Pooler) installées par le
@@ -87,16 +86,31 @@ public class DatabaseResources : ComponentResource
         var resourceOpts = new CustomResourceOptions { Parent = this };
 
         // ── Order DB ──────────────────────────────────────────────────────────
-        // Pas de CreateBootstrapSecret : CNPG gère le superuser postgres de façon autonome
-        // (order-db-superuser créé automatiquement). Le user 'app' reçoit son mot de passe
-        // via postInitSQL lors de l'initdb et est utilisé pour toutes les connexions applicatives.
+        // Bootstrap secret (app user) : CNPG 1.25.x gère le mot de passe du user owner (app).
+        // Sans ce secret, l'opérateur génère un mot de passe aléatoire dans {cluster}-app
+        // et l'impose à PostgreSQL à chaque réconciliation — incompatible avec notre
+        // connection string qui utilise un mot de passe fixe.
+        // Avec ce secret : CNPG lit order-db-app-bootstrap.password et le maintient en sync
+        // entre {cluster}-app et PostgreSQL → mot de passe stable et maîtrisé.
+        var orderBootstrap = CreateCnpgAppBootstrapSecret(
+            "order-db", args.OrderDbPassword, args, resourceOpts);
+
+        // Superuser secret (postgres) : sans superuserSecret explicite, CNPG génère un
+        // mot de passe aléatoire dans {cluster}-superuser et le régénère périodiquement.
+        // Cette régénération laisse parfois le user postgres avec un password NULL (race
+        // condition de réconciliation) → PgBouncer authQuery échoue → server_login_retry.
+        // Avec superuserSecret : CNPG lit notre secret et maintient le postgres user en sync
+        // de façon déterministe. Stable même après redémarrage de l'opérateur.
+        var orderSuperuser = CreateCnpgSuperuserSecret(
+            "order-db", args.OrderDbPassword, args, resourceOpts);
+
         CreateCnpgClusterAndPooler(
             clusterName: "order-db",
             dbName:      "order_db",
             appPassword: args.OrderDbPassword,
             instances:   args.OrderInstances,
             poolerInstances: args.PoolerInstances,
-            args, resourceOpts);
+            args, resourceOpts, orderBootstrap, orderSuperuser);
         // Service dédié aux métriques CNPG built-in (port 9187 sur les pods).
         // Le service -rw créé par CNPG n'expose que le port 5432.
         CreateCnpgMetricsService("order-db", args, resourceOpts);
@@ -108,13 +122,18 @@ public class DatabaseResources : ComponentResource
             args, resourceOpts);
 
         // ── Inventory DB ──────────────────────────────────────────────────────
+        var inventoryBootstrap = CreateCnpgAppBootstrapSecret(
+            "inventory-db", args.InventoryDbPassword, args, resourceOpts);
+        var inventorySuperuser = CreateCnpgSuperuserSecret(
+            "inventory-db", args.InventoryDbPassword, args, resourceOpts);
+
         CreateCnpgClusterAndPooler(
             clusterName: "inventory-db",
             dbName:      "inventory_db",
             appPassword: args.InventoryDbPassword,
             instances:   args.InventoryInstances,
             poolerInstances: args.PoolerInstances,
-            args, resourceOpts);
+            args, resourceOpts, inventoryBootstrap, inventorySuperuser);
         CreateCnpgMetricsService("inventory-db", args, resourceOpts);
         CreatePostgresExporter(
             "inventory",
@@ -179,6 +198,71 @@ public class DatabaseResources : ComponentResource
     }
 
     /// <summary>
+    /// Crée le bootstrap secret pour le user owner (app) d'un cluster CNPG.
+    ///
+    /// CNPG 1.25.x (chart 0.23.x) gère activement le mot de passe du user owner :
+    ///   - Sans bootstrap secret : CNPG génère un mot de passe aléatoire dans {cluster}-app
+    ///     et l'impose à PostgreSQL à chaque réconciliation.
+    ///   - Avec bootstrap secret : CNPG lit le mot de passe depuis ce secret, le propage
+    ///     dans {cluster}-app ET dans PostgreSQL, et le maintient stable.
+    ///
+    /// Le secret doit exister AVANT que le Cluster soit appliqué (DependsOn dans Command).
+    /// Type kubernetes.io/basic-auth : champs attendus "username" et "password".
+    /// </summary>
+    private static Secret CreateCnpgAppBootstrapSecret(
+        string clusterName,
+        string appPassword,
+        DatabaseResourcesArgs args,
+        CustomResourceOptions opts) =>
+        new Secret($"{clusterName}-app-bootstrap", new SecretArgs
+        {
+            Metadata = new ObjectMetaArgs
+            {
+                Namespace = args.Namespace,
+                Name      = $"{clusterName}-app-bootstrap"
+            },
+            // kubernetes.io/basic-auth : champs "username" et "password" reconnus par CNPG
+            Type = "kubernetes.io/basic-auth",
+            StringData = new InputMap<string>
+            {
+                ["username"] = "app",
+                ["password"] = appPassword
+            }
+        }, opts);
+
+    /// <summary>
+    /// Crée le secret pour le superuser postgres d'un cluster CNPG.
+    ///
+    /// En fournissant ce secret dans spec.superuserSecret.name, on force CNPG à utiliser
+    /// ce mot de passe pour le user postgres au lieu d'en générer un aléatoire.
+    /// CNPG maintient la cohérence entre ce secret et le user postgres à chaque reconciliation.
+    ///
+    /// Le Pooler référence ce même secret comme authQuerySecret pour accéder à pg_shadow.
+    ///
+    /// Nom : {cluster}-superuser-config (distinct de {cluster}-superuser auto-créé par CNPG).
+    /// </summary>
+    private static Secret CreateCnpgSuperuserSecret(
+        string clusterName,
+        string superuserPassword,
+        DatabaseResourcesArgs args,
+        CustomResourceOptions opts) =>
+        new Secret($"{clusterName}-superuser-config", new SecretArgs
+        {
+            Metadata = new ObjectMetaArgs
+            {
+                Namespace = args.Namespace,
+                Name      = $"{clusterName}-superuser-config"
+            },
+            // kubernetes.io/basic-auth : champs "username" et "password" reconnus par CNPG
+            Type = "kubernetes.io/basic-auth",
+            StringData = new InputMap<string>
+            {
+                ["username"] = "postgres",
+                ["password"] = superuserPassword
+            }
+        }, opts);
+
+    /// <summary>
     /// Applique via kubectl (Pulumi.Command) le manifeste CNPG multi-document :
     ///   1. Cluster CNPG — remplace le StatefulSet PostgreSQL
     ///   2. Pooler CNPG  — PgBouncer devant le cluster (session mode)
@@ -197,13 +281,12 @@ public class DatabaseResources : ComponentResource
     ///   avec un mot de passe aléatoire qu'il maintient lui-même. Le Pooler référence ce
     ///   secret auto-créé pour l'authQuery (accès pg_shadow superuser).
     ///
-    ///   Le user 'app' (owner de la base) reçoit appPassword via postInitSQL lors de l'initdb.
-    ///   C'est ce user que les applications utilisent pour se connecter (via SecretsResources).
+    ///   Le user 'app' (owner) est géré via initdb.secret ({cluster}-app-bootstrap).
+    ///   CNPG lit ce secret, propage le mot de passe dans {cluster}-app et dans PostgreSQL.
+    ///   Résultat : mot de passe stable, connu, maintenu en sync sans intervention manuelle.
     ///
-    ///   ⚠️ Sur un cluster déjà initialisé, postInitSQL ne tourne PAS à nouveau.
-    ///   Si le mot de passe du user 'app' doit être synchronisé manuellement :
-    ///     kubectl exec -n ecommerce {cluster}-1 -- psql -U postgres -d {db} \
-    ///       -c "ALTER USER app PASSWORD '<password>'"
+    ///   postInitSQL supprimé : avec CNPG 1.25.x, il ne s'exécute qu'à l'initdb et serait
+    ///   écrasé par la réconciliation CNPG de toute façon. initdb.secret est la bonne API.
     /// </summary>
     private static void CreateCnpgClusterAndPooler(
         string clusterName,
@@ -212,12 +295,14 @@ public class DatabaseResources : ComponentResource
         int instances,
         int poolerInstances,
         DatabaseResourcesArgs args,
-        CustomResourceOptions opts)
+        CustomResourceOptions opts,
+        Secret bootstrapSecret,
+        Secret superuserSecret)
     {
-        var poolerName = $"{clusterName}-pooler";
-        // CNPG crée {cluster}-superuser automatiquement (pas de superuserSecret).
-        // Ce secret a les droits superuser pour exécuter l'authQuery dans pg_shadow.
-        var poolerAuthSecret = $"{clusterName}-superuser";
+        var poolerName       = $"{clusterName}-pooler";
+        // Nom du secret superuser que nous contrôlons (distinct de {cluster}-superuser auto-créé).
+        // Le Pooler utilise ce même secret pour l'authQuery pg_shadow.
+        var superuserSecretName = $"{clusterName}-superuser-config";
 
         var yaml = args.Namespace.Apply(ns => $@"apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -233,12 +318,20 @@ spec:
   postgresql:
     parameters:
       max_connections: ""200""
+    pg_hba:
+      # Permet à PgBouncer (depuis le CIDR pod Kind 10.244.0.0/24) de se connecter
+      # en tant que 'postgres' sans mot de passe pour exécuter l'authQuery.
+      # Nécessaire car CNPG efface périodiquement le mot de passe du superuser 'postgres'.
+      # En prod : remplacer trust par scram-sha-256 et fournir un superuserSecret stable.
+      - ""host all postgres 10.244.0.0/24 trust""
+  superuserSecret:
+    name: {superuserSecretName}
   bootstrap:
     initdb:
       database: {dbName}
       owner: app
-      postInitSQL:
-        - ""ALTER USER app PASSWORD '{appPassword}'""
+      secret:
+        name: {clusterName}-app-bootstrap
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Pooler
@@ -257,8 +350,13 @@ spec:
       default_pool_size: ""200""
     authQuery: ""SELECT usename, passwd FROM pg_shadow WHERE usename=$1""
     authQuerySecret:
-      name: {poolerAuthSecret}");
+      name: {superuserSecretName}");
 
+        // DependsOn bootstrapSecret + superuserSecret : les deux secrets doivent exister
+        // dans K8s avant que CNPG lise initdb.secret et superuserSecret.
+        // Sans cette dépendance, le Cluster serait appliqué avant que les secrets soient
+        // créés → erreur CNPG "secret not found".
+        //
         // Create = Update = server-side apply (idempotent).
         // Delete = delete le Cluster et le Pooler (CNPG supprime aussi les PVCs).
         _ = new Command($"{clusterName}-cluster-apply", new CommandArgs
@@ -269,7 +367,8 @@ spec:
             Stdin  = yaml
         }, new CustomResourceOptions
         {
-            Parent = opts.Parent
+            Parent    = opts.Parent,
+            DependsOn = { bootstrapSecret, superuserSecret }
         });
     }
 

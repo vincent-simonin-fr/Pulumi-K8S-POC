@@ -74,23 +74,25 @@ public class InventoryServiceResources : ComponentResource
                         {
                             Name  = "wait-for-dependencies",
                             Image = "postgres:16-alpine",
-                            EnvFrom = new EnvFromSourceArgs
-                            {
-                                SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.InventoryDbSecretName }
-                            },
-                            // bash est disponible dans postgres:16-alpine (utilisé par l'entrypoint officiel).
-                            // /dev/tcp est un built-in bash — pas besoin de nc ou curl.
-                            // 1) Attend que le primary CNPG inventory-db-rw soit prêt (psql SELECT 1)
-                            //    args.InventoryDbHost = "inventory-db-rw" (service -rw créé par CNPG)
-                            // 2) Attend que le port AMQP 5672 de RabbitMQ réponde (TCP)
+                            // Pas besoin du secret DB : uniquement un check TCP (pas d'auth).
+                            // /dev/tcp est un built-in bash disponible dans postgres:16-alpine.
+                            //
+                            // Pourquoi TCP plutôt que psql SELECT 1 ?
+                            //   psql = DNS + TCP + handshake TLS + authentification PostgreSQL (~5-8 s)
+                            //   TCP  = DNS + TCP uniquement (~0.2 s par tentative, 1-2 s au total)
+                            // Gain estimé : -5 à -8 s sur le cold-start des pods lors d'un scale-out.
+                            //
+                            // Tradeoff : on ne valide plus que les credentials sont corrects à ce stade.
+                            // L'authentification est vérifiée au premier accès EF Core (startup de l'app).
+                            // Avec CNPG, quand -rw répond sur 5432, la base est opérationnelle.
                             Command = args.InventoryDbHost.Apply(dbHost => (IEnumerable<string>) new[]
                             {
                                 "/bin/bash", "-c",
-                                $"echo 'Waiting for {dbHost}...' && " +
-                                $"until PGPASSWORD=$POSTGRES_PASSWORD psql -h {dbHost} -U $POSTGRES_USER -d $POSTGRES_DB -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done && " +
-                                $"echo '{dbHost} ready. Waiting for RabbitMQ...' && " +
-                                "until (echo > /dev/tcp/rabbitmq/5672) 2>/dev/null; do sleep 2; done && " +
-                                "echo 'All dependencies ready.'"
+                                $"echo 'Waiting for {dbHost}:5432 (TCP)...' && " +
+                                $"until (echo > /dev/tcp/{dbHost}/5432) 2>/dev/null; do sleep 1; done && " +
+                                $"echo '{dbHost} TCP ready. Waiting for RabbitMQ:5672 (TCP)...' && " +
+                                "until (echo > /dev/tcp/rabbitmq/5672) 2>/dev/null; do sleep 1; done && " +
+                                "echo 'All dependencies TCP-ready.'"
                             })
                         },
                         Containers = new ContainerArgs
@@ -121,17 +123,21 @@ public class InventoryServiceResources : ComponentResource
                                     ["memory"] = args.MemoryLimit
                                 }
                             },
+                            // InitialDelaySeconds réduit à 10 : l'init container TCP (~1-2 s) libère le
+                            // main container bien avant que .NET ait fini son startup (~15 s).
+                            // PeriodSeconds=5 + FailureThreshold=24 → budget total : 10 + 24×5 = 130 s
+                            // (couvre EF Core MigrateAsync même sur une base fraîche).
                             ReadinessProbe = new ProbeArgs
                             {
                                 HttpGet             = new HTTPGetActionArgs { Path = "/health/ready", Port = 8080 },
-                                InitialDelaySeconds = 30,
-                                PeriodSeconds       = 10,
-                                FailureThreshold    = 12
+                                InitialDelaySeconds = 10,
+                                PeriodSeconds       = 5,
+                                FailureThreshold    = 24
                             },
                             LivenessProbe = new ProbeArgs
                             {
                                 HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
-                                InitialDelaySeconds = 60,
+                                InitialDelaySeconds = 40,
                                 PeriodSeconds       = 15
                             }
                         }
