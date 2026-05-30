@@ -25,19 +25,19 @@ config:
   # request = garanti par le scheduler   |  limit = plafond (OOMKill si dépassé)
   # Format CPU : "100m" = 0.1 core       |  Format mémoire : "128Mi"
   resources:orderApiCpuRequest: "100m"
-  resources:orderApiCpuLimit: "500m"
-  resources:orderApiMemoryRequest: "128Mi"
-  resources:orderApiMemoryLimit: "256Mi"
+  resources:orderApiCpuLimit: "750m"
+  resources:orderApiMemoryRequest: "192Mi"
+  resources:orderApiMemoryLimit: "384Mi"
 
   resources:inventoryApiCpuRequest: "100m"
-  resources:inventoryApiCpuLimit: "500m"
+  resources:inventoryApiCpuLimit: "1000m"
   resources:inventoryApiMemoryRequest: "192Mi"
   resources:inventoryApiMemoryLimit: "512Mi"
 
   resources:gatewayCpuRequest: "50m"
-  resources:gatewayCpuLimit: "250m"
-  resources:gatewayMemoryRequest: "64Mi"
-  resources:gatewayMemoryLimit: "128Mi"
+  resources:gatewayCpuLimit: "500m"
+  resources:gatewayMemoryRequest: "128Mi"
+  resources:gatewayMemoryLimit: "256Mi"
 
   # ── Secrets (External Secrets Operator) ─────────────────────────────────
   # Les valeurs ci-dessous sont des DÉFAUTS pour le développement local.
@@ -49,9 +49,9 @@ config:
   #
   # Ces commandes chiffrent la valeur dans ce fichier (format "secure: <encrypted>").
   # Les clés non sensibles (user, name) peuvent rester en clair.
-  secrets:orderDbUser: app        # user 'app' = owner CNPG (pas postgres superuser)
+  secrets:orderDbUser: app # user 'app' = owner CNPG (pas postgres superuser)
   secrets:orderDbName: order_db
-  secrets:inventoryDbUser: app    # user 'app' = owner CNPG (pas postgres superuser)
+  secrets:inventoryDbUser: app # user 'app' = owner CNPG (pas postgres superuser)
   secrets:inventoryDbName: inventory_db
   secrets:rabbitmqUser: guest
   # ⚠️ Ne pas commiter les mots de passe en clair — utiliser --secret (voir ci-dessus)
@@ -64,12 +64,12 @@ config:
 
   # Observabilite — OTel Collector + Jaeger + Prometheus + Grafana
   # NodePorts exposes sur l'hote via Kind extraPortMappings (kind-config.yaml).
-  observability:grafanaNodePort:   "30030"
-  observability:jaegerNodePort:    "30686"
-  observability:otelVersion:       "0.153.0"
-  observability:jaegerVersion:     "1.76.0"
+  observability:grafanaNodePort: "30030"
+  observability:jaegerNodePort: "30686"
+  observability:otelVersion: "0.153.0"
+  observability:jaegerVersion: "1.76.0"
   observability:prometheusVersion: "v3.11.3"
-  observability:grafanaVersion:    "13.0.1-security-01"
+  observability:grafanaVersion: "13.0.1-security-01"
 
   # ── Mode presale (flash sale, promo, événement) ─────────────────────────
   # Quand activé, les HPA sont forcés au minReplicas presale AVANT le pic.
@@ -83,9 +83,9 @@ config:
   #   scripts\presale.cmd start
   #   scripts\presale.cmd stop
   presale:enabled: "false"
-  presale:inventoryApiMin: "3"   # pods inventory-api en attente du pic
-  presale:orderApiMin: "3"       # pods order-api en attente du pic
-  presale:gatewayMin: "2"        # pods gateway en attente du pic
+  presale:inventoryApiMin: "3" # pods inventory-api en attente du pic
+  presale:orderApiMin: "3" # pods order-api en attente du pic
+  presale:gatewayMin: "2" # pods gateway en attente du pic
 
   # ── Metrics Server — métriques CPU/mémoire pour HPA et kubectl top ─────
   # Installé automatiquement par Pulumi via Helm (MetricsServerResources.cs).
@@ -104,12 +104,12 @@ config:
   # Le Metrics Server ci-dessus est obligatoire pour que les métriques CPU soient lisibles.
   hpa:orderApiEnabled: "true"
   hpa:orderApiMin: "1"
-  hpa:orderApiMax: "4"
+  hpa:orderApiMax: "8"
   hpa:orderApiCpu: "70"
 
   hpa:gatewayEnabled: "true"
   hpa:gatewayMin: "1"
-  hpa:gatewayMax: "3"
+  hpa:gatewayMax: "8"
   hpa:gatewayCpu: "70"
 
   # ── CNPG — CloudNativePG Operator + Clusters + Poolers ────────────────
@@ -130,9 +130,9 @@ config:
   #   0.23.x => opérateur 1.25.x  (bug corrigé)
   #   0.28.x => opérateur 1.29.x  (latest stable)
   cnpg:version: "0.23.2"
-  cnpg:orderInstances: "1"        # pods postgres order-db   (dev=1, prod=3)
-  cnpg:inventoryInstances: "1"    # pods postgres inventory-db
-  cnpg:poolerInstances: "1"       # pods PgBouncer par cluster (dev=1, prod=2)
+  cnpg:orderInstances: "1" # pods postgres order-db   (dev=1, prod=3)
+  cnpg:inventoryInstances: "1" # pods postgres inventory-db
+  cnpg:poolerInstances: "2" # pods PgBouncer par cluster (dev=1, prod=2)
 
   # ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ─────────
   # KEDA scale inventory-api sur la profondeur de la queue RabbitMQ.
@@ -148,12 +148,12 @@ config:
   # Vérifier dans l'UI RabbitMQ (http://localhost:15672 → Queues) après démarrage.
   keda:version: "2.17.0"
   keda:queueName: "product-added-to-cart"
-  keda:queueLength: "5"          # messages par réplica → scale-out si queue > N*replicas
-  keda:inventoryApiMin: "1"      # minReplicaCount du ScaledObject (aussi utilisé par presale:inventoryApiMin)
-  keda:inventoryApiMax: "8"      # 8×25 pool = 200 = max_connections CNPG (prod : préférer 6-7 pour laisser marge)
-  keda:pollingInterval: "5"      # secondes entre chaque lecture de la queue
-  keda:cooldownPeriod: "60"      # secondes d'inactivité avant que KEDA demande le scale-in au HPA
-  keda:scaleDownWindow: "240"    # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)
+  keda:queueLength: "5" # messages par réplica → scale-out si queue > N*replicas
+  keda:inventoryApiMin: "1" # minReplicaCount du ScaledObject (aussi utilisé par presale:inventoryApiMin)
+  keda:inventoryApiMax: "8" # 8×25 pool = 200 = max_connections CNPG (prod : préférer 6-7 pour laisser marge)
+  keda:pollingInterval: "5" # secondes entre chaque lecture de la queue
+  keda:cooldownPeriod: "60" # secondes d'inactivité avant que KEDA demande le scale-in au HPA
+  keda:scaleDownWindow: "240" # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)
 
   # ── Argo CD — GitOps Continuous Delivery ────────────────────────────────
   # Argo CD surveille un repo Git et réconcilie l'état du cluster.
@@ -177,7 +177,7 @@ config:
   #   7.7.x → Argo CD 2.13.x
   #   7.8.x → Argo CD 2.14.x
   argocd:version: "7.8.3"
-  argocd:serverReplicas: "1"              # dev=1 | prod HA=2
-  argocd:repoServerReplicas: "1"          # dev=1 | prod HA=2
-  argocd:applicationSetReplicas: "1"      # dev=1 | prod HA=2
+  argocd:serverReplicas: "1" # dev=1 | prod HA=2
+  argocd:repoServerReplicas: "1" # dev=1 | prod HA=2
+  argocd:applicationSetReplicas: "1" # dev=1 | prod HA=2
   # argocd:adminPasswordHash: ""          # bcrypt hash — utiliser --secret en production

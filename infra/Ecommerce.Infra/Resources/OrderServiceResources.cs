@@ -146,7 +146,9 @@ public class OrderServiceResources : ComponentResource
                             {
                                 HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
                                 InitialDelaySeconds = 40,
-                                PeriodSeconds       = 15
+                                PeriodSeconds       = 15,
+                                TimeoutSeconds      = 5,
+                                FailureThreshold    = 5
                             }
                         }
                     }

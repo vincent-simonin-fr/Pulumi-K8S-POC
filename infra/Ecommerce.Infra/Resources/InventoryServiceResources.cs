@@ -134,11 +134,18 @@ public class InventoryServiceResources : ComponentResource
                                 PeriodSeconds       = 5,
                                 FailureThreshold    = 24
                             },
+                            // TimeoutSeconds=5 : sous charge intense (700+ VUs), le thread pool
+                            // .NET est saturé et même /health peut prendre >1s (défaut Kubernetes).
+                            // 5s donne de la marge sans masquer un vrai deadlock.
+                            // FailureThreshold=5 : 5×15s = 75s avant kill — tolère les pics courts
+                            // sans redémarrer le pod sur une congestion temporaire.
                             LivenessProbe = new ProbeArgs
                             {
                                 HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
                                 InitialDelaySeconds = 40,
-                                PeriodSeconds       = 15
+                                PeriodSeconds       = 15,
+                                TimeoutSeconds      = 5,
+                                FailureThreshold    = 5
                             }
                         }
                     }

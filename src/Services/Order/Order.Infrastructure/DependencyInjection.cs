@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Order.Application.Common.Interfaces;
 using Order.Application.EventHandlers;
+using Order.Domain.Exceptions;
 using Order.Infrastructure.Persistence;
 
 namespace Order.Infrastructure;
@@ -26,7 +27,19 @@ public static class DependencyInjection
         // ── MassTransit / RabbitMQ ────────────────────────────────────────────
         services.AddMassTransit(x =>
         {
-            x.AddConsumer<ProductReservationExpiredConsumer>();
+            // Retry sélectif : uniquement les exceptions techniques.
+            // DomainException (InvalidCartOperationException) → pas de retry :
+            // l'item n'est plus dans le panier — état cohérent, retenter inutile.
+            x.AddConsumer<ProductReservationExpiredConsumer>(cfg =>
+            {
+                cfg.UseMessageRetry(r =>
+                {
+                    r.Incremental(retryLimit: 3,
+                                  initialInterval: TimeSpan.FromSeconds(1),
+                                  intervalIncrement: TimeSpan.FromSeconds(2));
+                    r.Ignore<DomainException>();
+                });
+            });
 
             x.UsingRabbitMq((ctx, cfg) =>
             {

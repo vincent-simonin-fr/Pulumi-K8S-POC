@@ -317,7 +317,7 @@ spec:
     storageClass: standard
   postgresql:
     parameters:
-      max_connections: ""200""
+      max_connections: ""400""
     pg_hba:
       # Permet à PgBouncer (depuis le CIDR pod Kind 10.244.0.0/24) de se connecter
       # en tant que 'postgres' sans mot de passe pour exécuter l'authQuery.

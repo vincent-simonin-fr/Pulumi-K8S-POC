@@ -103,7 +103,17 @@ public class GatewayResources : ComponentResource
                             {
                                 HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
                                 InitialDelaySeconds = 5,
-                                PeriodSeconds       = 5
+                                PeriodSeconds       = 5,
+                                TimeoutSeconds      = 5,
+                                FailureThreshold    = 5
+                            },
+                            LivenessProbe = new ProbeArgs
+                            {
+                                HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
+                                InitialDelaySeconds = 15,
+                                PeriodSeconds       = 15,
+                                TimeoutSeconds      = 5,
+                                FailureThreshold    = 5
                             }
                         }
                     }
