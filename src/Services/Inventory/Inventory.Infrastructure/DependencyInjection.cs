@@ -1,5 +1,6 @@
 using Inventory.Application.Common.Interfaces;
 using Inventory.Application.EventHandlers;
+using Inventory.Domain.Exceptions;
 using Inventory.Infrastructure.BackgroundServices;
 using Inventory.Infrastructure.Persistence;
 using MassTransit;
@@ -52,7 +53,22 @@ public static class DependencyInjection
             // Le nom kebab-case est celui configuré dans KEDA (keda:queueName dans Pulumi.dev.yaml).
             x.SetKebabCaseEndpointNameFormatter();
 
-            x.AddConsumer<ProductAddedToCartConsumer>();
+            // Retry sélectif : uniquement les exceptions techniques.
+            // DomainException (InsufficientStock, ProductNotFound) → pas de retry :
+            //   le stock ne reviendra pas entre deux tentatives. Le consumer publie
+            //   un événement compensatoire (ProductReservationFailedEvent) à la place.
+            // Exception technique (DB down, timeout réseau) → 3 tentatives avec
+            //   délai incrémental (1s, 3s, 6s) avant d'aller en error queue.
+            x.AddConsumer<ProductAddedToCartConsumer>(cfg =>
+            {
+                cfg.UseMessageRetry(r =>
+                {
+                    r.Incremental(retryLimit: 3,
+                                  initialInterval: TimeSpan.FromSeconds(1),
+                                  intervalIncrement: TimeSpan.FromSeconds(2));
+                    r.Ignore<DomainException>();     // Pas de retry pour les exceptions métier
+                });
+            });
 
             x.UsingRabbitMq((ctx, cfg) =>
             {

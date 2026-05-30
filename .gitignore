@@ -31,3 +31,6 @@ appsettings.*.json
 logs/
 *.log
 
+
+## YAML
+k8s/*

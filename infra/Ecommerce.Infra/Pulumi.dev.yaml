@@ -31,8 +31,8 @@ config:
 
   resources:inventoryApiCpuRequest: "100m"
   resources:inventoryApiCpuLimit: "500m"
-  resources:inventoryApiMemoryRequest: "128Mi"
-  resources:inventoryApiMemoryLimit: "256Mi"
+  resources:inventoryApiMemoryRequest: "192Mi"
+  resources:inventoryApiMemoryLimit: "512Mi"
 
   resources:gatewayCpuRequest: "50m"
   resources:gatewayCpuLimit: "250m"
