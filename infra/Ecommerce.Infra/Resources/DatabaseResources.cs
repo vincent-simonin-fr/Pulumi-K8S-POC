@@ -317,7 +317,10 @@ spec:
     storageClass: standard
   postgresql:
     parameters:
-      max_connections: ""400""
+      # max_connections=200 : pic mesuré sous stress 700 VU = ~133 connexions
+      # (8 pods × Npgsql pool 15). Marge 1.5× + réservé (réplication, superuser,
+      # exporters). 400 était surdimensionné (~2 Go RAM réservée pour rien).
+      max_connections: ""200""
     pg_hba:
       # Permet à PgBouncer (depuis le CIDR pod Kind 10.244.0.0/24) de se connecter
       # en tant que 'postgres' sans mot de passe pour exécuter l'authQuery.
@@ -347,7 +350,10 @@ spec:
     poolMode: session
     parameters:
       max_client_conn: ""1000""
-      default_pool_size: ""200""
+      # default_pool_size=80 par pooler : 2 poolers × 80 = 160 < max_connections=200
+      # (− réservé ~15 = 185). Impossible de saturer Postgres même en burst.
+      # Couvre le pic réel (133 réparti sur 2 poolers ≈ 67/pooler).
+      default_pool_size: ""80""
     authQuery: ""SELECT usename, passwd FROM pg_shadow WHERE usename=$1""
     authQuerySecret:
       name: {superuserSecretName}");

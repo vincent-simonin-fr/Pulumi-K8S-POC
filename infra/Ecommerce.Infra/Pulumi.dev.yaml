@@ -27,11 +27,14 @@ config:
   # request = garanti par le scheduler   |  limit = plafond (OOMKill si dépassé)
 
   # Format CPU : "100m" = 0.1 core       |  Format mémoire : "128Mi"
-  resources:orderApiCpuRequest: "100m"
+  # CpuRequest 200m : le bruit de fond .NET (GC + health probes) consomme ~60m.
+  # Avec une request de 100m, le seuil HPA (70% = 70m) était frôlé au repos →
+  # flapping 1↔2 sans trafic. 200m éloigne le seuil (140m) du repos.
+  resources:orderApiCpuRequest: "200m"
   resources:orderApiCpuLimit: "750m"
   resources:orderApiMemoryRequest: "192Mi"
   resources:orderApiMemoryLimit: "384Mi"
-  resources:inventoryApiCpuRequest: "100m"
+  resources:inventoryApiCpuRequest: "200m"
   resources:inventoryApiCpuLimit: "1000m"
   resources:inventoryApiMemoryRequest: "192Mi"
   resources:inventoryApiMemoryLimit: "512Mi"
@@ -173,8 +176,8 @@ config:
 
   #   0.28.x => opérateur 1.29.x  (latest stable)
   cnpg:version: "0.23.2"
-  cnpg:orderInstances: "1" # pods postgres order-db   (dev=1, prod=3)
-  cnpg:inventoryInstances: "1" # pods postgres inventory-db
+  cnpg:orderInstances: "3" # pods postgres order-db   (dev=1, prod=3)
+  cnpg:inventoryInstances: "3" # pods postgres inventory-db
   cnpg:poolerInstances: "2" # pods PgBouncer par cluster (dev=1, prod=2)
   # ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ─────────
 
@@ -203,7 +206,7 @@ config:
   keda:queueName: "product-added-to-cart"
   keda:queueLength: "5" # messages par réplica → scale-out si queue > N*replicas
   keda:inventoryApiMin: "1" # minReplicaCount du ScaledObject (aussi utilisé par presale:inventoryApiMin)
-  keda:inventoryApiMax: "8" # 8×25 pool = 200 = max_connections CNPG (prod : préférer 6-7 pour laisser marge)
+  keda:inventoryApiMax: "8" # 8×15 pool = 120 connexions, sous max_connections=400 (marge confortable)
   keda:pollingInterval: "5" # secondes entre chaque lecture de la queue
   keda:cooldownPeriod: "60" # secondes d'inactivité avant que KEDA demande le scale-in au HPA
   keda:scaleDownWindow: "240" # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)

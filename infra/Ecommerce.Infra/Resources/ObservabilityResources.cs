@@ -80,8 +80,19 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
+  # memory_limiter : protège le collector de l'OOM sous afflux de traces (tests de
+  # charge). Quand la RAM dépasse le seuil, il rejette/ralentit les nouvelles données
+  # plutôt que de gonfler le buffer jusqu'au kill. DOIT être le 1er processor.
+  # limit_mib=400 < limite conteneur 512Mi (marge pour heap Go + GC).
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+    spike_limit_mib: 100
+  # batch borné : send_batch_max_size évite des batchs géants en mémoire.
   batch:
     timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
 
 exporters:
   otlp/jaeger:
@@ -99,11 +110,11 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [otlp/jaeger]
     metrics:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [prometheus]
 "
             }
@@ -145,10 +156,13 @@ service:
                                 Name      = "config",
                                 MountPath = "/etc/otel"
                             },
+                            // RAM 512Mi : le memory_limiter (limit_mib=400) doit rester sous
+                            // la limite conteneur, avec marge pour heap Go + GC. 256Mi
+                            // provoquait des OOMKill sous tests de charge (buffer de spans).
                             Resources = new ResourceRequirementsArgs
                             {
-                                Requests = new InputMap<string> { ["cpu"] = "50m",  ["memory"] = "64Mi"  },
-                                Limits   = new InputMap<string> { ["cpu"] = "200m", ["memory"] = "256Mi" }
+                                Requests = new InputMap<string> { ["cpu"] = "50m",  ["memory"] = "128Mi" },
+                                Limits   = new InputMap<string> { ["cpu"] = "500m", ["memory"] = "512Mi" }
                             },
                             ReadinessProbe = new ProbeArgs
                             {
@@ -213,8 +227,10 @@ service:
                             {
                                 // Active le récepteur OTLP natif de Jaeger
                                 new() { Name = "COLLECTOR_OTLP_ENABLED", Value = "true" },
-                                // Limite les traces conservées en mémoire
-                                new() { Name = "MEMORY_MAX_TRACES",      Value = "50000" }
+                                // Limite les traces conservées en mémoire (badger in-memory).
+                                // 10000 : tient dans 512Mi même sous tests de charge 1000 VU.
+                                // 50000 provoquait des OOMKill (afflux massif de traces OTLP).
+                                new() { Name = "MEMORY_MAX_TRACES",      Value = "10000" }
                             },
                             Ports = new List<ContainerPortArgs>
                             {
@@ -501,16 +517,25 @@ datasources:
                                 new() { Name = "dashboard-provider", MountPath = "/etc/grafana/provisioning/dashboards"  },
                                 new() { Name = "dashboards",         MountPath = "/var/lib/grafana/dashboards"           }
                             },
+                            // CPU 500m / RAM 768Mi : 200m/512Mi saturaient sous dashboards
+                            // auto-refresh (requêtes /api/annotations à 20s+ → throttling →
+                            // readiness échoue). Grafana au repos ~50m/150Mi, ces limites
+                            // couvrent les pics d'interrogation Prometheus pendant les tests.
                             Resources = new ResourceRequirementsArgs
                             {
-                                Requests = new InputMap<string> { ["cpu"] = "50m",  ["memory"] = "128Mi" },
-                                Limits   = new InputMap<string> { ["cpu"] = "200m", ["memory"] = "512Mi" }
+                                Requests = new InputMap<string> { ["cpu"] = "100m", ["memory"] = "192Mi" },
+                                Limits   = new InputMap<string> { ["cpu"] = "500m", ["memory"] = "768Mi" }
                             },
+                            // TimeoutSeconds=5 : /api/health peut dépasser 1s (défaut) quand
+                            // Grafana interroge Prometheus sous charge. FailureThreshold=5
+                            // tolère des pics transitoires sans marquer le pod 0/1.
                             ReadinessProbe = new ProbeArgs
                             {
                                 HttpGet             = new HTTPGetActionArgs { Path = "/api/health", Port = 3000 },
                                 InitialDelaySeconds = 10,
-                                PeriodSeconds       = 5
+                                PeriodSeconds       = 5,
+                                TimeoutSeconds      = 5,
+                                FailureThreshold    = 5
                             }
                         },
                         Volumes = new List<VolumeArgs>

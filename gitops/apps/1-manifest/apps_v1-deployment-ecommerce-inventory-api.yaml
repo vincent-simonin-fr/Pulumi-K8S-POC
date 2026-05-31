@@ -34,7 +34,7 @@ spec:
             name: inventory-db-credentials
         - secretRef:
             name: rabbitmq-credentials
-        image: localhost/ecommerce/inventory-api:dev
+        image: localhost/ecommerce/inventory-api:1.0.0-800a3a1
         imagePullPolicy: IfNotPresent
         livenessProbe:
           failureThreshold: 5
@@ -59,7 +59,7 @@ spec:
             cpu: "1"
             memory: 512Mi
           requests:
-            cpu: 100m
+            cpu: 200m
             memory: 192Mi
       initContainers:
       - command:

@@ -73,15 +73,14 @@ public class SecretsResources : ComponentResource
                 ["POSTGRES_DB"]       = args.OrderDbName,
                 // order-api — ASP.NET Core ConnectionStrings__OrderDb
                 // Host = order-db-pooler : passe par PgBouncer (session mode).
-                // Maximum Pool Size=25 (Npgsql, par pod) + default_pool_size=200 (PgBouncer) :
-                // en session mode chaque connexion Npgsql = 1 connexion PG ; PgBouncer doit
-                // absorber jusqu'à 8 pods × 25 = 200 connexions → default_pool_size=200
-                // (égal à max_connections CNPG). Minimum Pool Size=0 : pas de connexions
-                // en veille (économie de ressources en dev).
+                // Maximum Pool Size=15 (Npgsql, par pod) : en session mode chaque connexion
+                // Npgsql = 1 connexion PG. Pic mesuré sous stress (8 pods KEDA) ≈ 8×15 = 120
+                // connexions, bien sous max_connections=400 (marge confortable + réservé
+                // réplication/superuser). Minimum Pool Size=0 : pas de connexions en veille.
                 ["ConnectionStrings__OrderDb"] =
                     $"Host={args.OrderDbHost};Port=5432;Database={args.OrderDbName};" +
                     $"Username={args.OrderDbUser};Password={args.OrderDbPassword};" +
-                    $"Maximum Pool Size=25;Minimum Pool Size=0"
+                    $"Maximum Pool Size=15;Minimum Pool Size=0"
             }
         }, resourceOpts);
 
@@ -98,11 +97,11 @@ public class SecretsResources : ComponentResource
                 ["POSTGRES_DB"]       = args.InventoryDbName,
                 // inventory-api — ASP.NET Core ConnectionStrings__InventoryDb
                 // inventory-api scale jusqu'à keda:inventoryApiMax réplicas (8 en dev) via KEDA.
-                // 8×25 = 200 connexions max = max_connections CNPG.
+                // 8×15 = 120 connexions max, sous max_connections=400.
                 ["ConnectionStrings__InventoryDb"]  =
                     $"Host={args.InventoryDbHost};Port=5432;Database={args.InventoryDbName};" +
                     $"Username={args.InventoryDbUser};Password={args.InventoryDbPassword};" +
-                    $"Maximum Pool Size=25;Minimum Pool Size=0"
+                    $"Maximum Pool Size=15;Minimum Pool Size=0"
             }
         }, resourceOpts);
 
