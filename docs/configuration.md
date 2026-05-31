@@ -299,8 +299,8 @@ pulumi up --yes
 
 ```bash
 # Effet immédiat via patch kubectl direct
-scripts\presale.cmd start
-scripts\presale.cmd stop
+dotnet nuke PresaleStart
+dotnet nuke PresaleStop
 ```
 
 > ⚠️ Un `pulumi up` ultérieur avec `presale:enabled=false` écrasera les patches kubectl.
@@ -356,7 +356,7 @@ kubectl get hpa -n ecommerce
 
 | Clé | Défaut | Description |
 |-----|--------|-------------|
-| `cnpg:version` | `0.22.0` | Version du **chart Helm** cloudnative-pg (≠ version opérateur) |
+| `cnpg:version` | `0.23.2` | Version du **chart Helm** cloudnative-pg (≠ version opérateur) |
 | `cnpg:orderInstances` | `1` | Pods PostgreSQL pour order-db (dev=1, prod=3) |
 | `cnpg:inventoryInstances` | `1` | Pods PostgreSQL pour inventory-db |
 | `cnpg:poolerInstances` | `1` | Pods PgBouncer par cluster (dev=1, prod=2) |
@@ -552,7 +552,7 @@ config:
   ingress:acmeEmail: "ops@wizzz.com"
 
   # PostgreSQL HA (3 instances = 1 primary + 2 replicas)
-  cnpg:version: "0.22.0"
+  cnpg:version: "0.23.2"
   cnpg:orderInstances: "3"
   cnpg:inventoryInstances: "3"
   cnpg:poolerInstances: "2"

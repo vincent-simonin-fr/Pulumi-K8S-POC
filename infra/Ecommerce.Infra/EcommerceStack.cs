@@ -157,7 +157,7 @@ public class EcommerceStack : Stack
         //   → les pods sont pré-chauffés AVANT le pic, sans cold-start
         //
         // Urgence (sans pulumi up) :
-        //   scripts\presale.cmd start / stop
+        //   dotnet nuke PresaleStart / PresaleStop
         //   → patch direct du ScaledObject via kubectl
         _ = new KedaResources("keda", new KedaResourcesArgs
         {

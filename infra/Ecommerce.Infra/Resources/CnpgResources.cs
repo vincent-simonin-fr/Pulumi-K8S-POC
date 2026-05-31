@@ -8,10 +8,14 @@ public class CnpgResourcesArgs
 {
     /// <summary>
     /// Version du chart Helm cloudnative-pg (pas la version de l'operateur).
-    /// Correspondance : chart 0.22.0 => operateur 1.24.0, chart 0.28.x => operateur 1.29.x.
+    /// Correspondance : chart 0.23.2 => operateur 1.25.1, chart 0.28.x => operateur 1.29.x.
     /// Configurable via cnpg:version dans Pulumi.*.yaml.
+    ///
+    /// Défaut aligné sur l'image préchargée (opérateur 1.25.1) par Nuke PreloadImages /
+    /// k8s_complete_launch.cmd. NE PAS revenir à 0.22.0 : opérateur 1.24.0 = bug connu
+    /// (efface le mot de passe postgres à chaque réconciliation) ET image non préchargée.
     /// </summary>
-    public string Version { get; set; } = "0.22.0";
+    public string Version { get; set; } = "0.23.2";
 }
 
 /// <summary>

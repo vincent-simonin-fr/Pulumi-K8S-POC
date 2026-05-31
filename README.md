@@ -19,7 +19,7 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 | [k9s](docs/k9s.md) | Interface terminal Kubernetes — logs, shell, describe sans Dashboard |
 | [Tests de charge](docs/load-testing.md) | k6 — scénarios baseline/load/stress/spike, intégration Prometheus |
 | [Argo CD / GitOps](docs/argocd.md) | Déploiement GitOps des apps, credential dépôt privé, RBAC, SSO |
-| [Versioning des images](docs/versioning.md) | Tags SemVer + SHA par service, build-images.ps1, redéploiement ciblé |
+| [Versioning des images](docs/versioning.md) | Tags SemVer + SHA par service, `dotnet nuke BuildImages`, redéploiement ciblé |
 
 ---
 
@@ -69,12 +69,18 @@ Voir [Architecture](docs/architecture.md) pour les détails.
 
 ---
 
-## Démarrage rapide — script automatisé
+## Démarrage rapide — automatisé (Nuke)
 
 ```bash
-# Depuis la racine du projet — fait tout : cluster, images, pulumi up
-scripts\k8s_complete_launch.cmd
+# Depuis la racine du projet — fait tout : cluster, images, build, pulumi up
+dotnet nuke Launch
 ```
+
+> Le secrets provider Pulumi requiert une passphrase (exécution non interactive) :
+> exporter `PULUMI_CONFIG_PASSPHRASE` dans le shell, ou passer `--pulumi-passphrase`.
+>
+> L'ancien script batch `scripts\k8s_complete_launch.cmd` est conservé pour mémoire
+> (équivalent autonome, voir [docs/versioning.md](docs/versioning.md)).
 
 ---
 
@@ -153,7 +159,7 @@ git add gitops && git commit -m "gitops: apps" && git push
 ```
 
 Les images sont versionnées en `{SemVer}-{SHA-par-service}` via
-`scripts/build-images.ps1`, de sorte qu'un changement sur un seul service ne
+`dotnet nuke BuildImages`, de sorte qu'un changement sur un seul service ne
 redéploie que celui-ci. Détails : [docs/versioning.md](docs/versioning.md).
 
 ### Accès à un dépôt privé

@@ -14,6 +14,14 @@ infra/
 openspec/
 .claude/
 
+# ── Automatisation Nuke (build local) ──────────────────────────────────────────
+# Exclu du contexte de build applicatif : le process `dotnet nuke` écrit dans ces
+# dossiers PENDANT le `podman build`, ce qui corrompt le tar du contexte
+# (archive/tar: write too long). Aucun rapport avec l'image applicative.
+build/
+.nuke/
+.config/
+
 # ── IDE & outils locaux ────────────────────────────────────────────────────────
 .vscode/
 .vs/

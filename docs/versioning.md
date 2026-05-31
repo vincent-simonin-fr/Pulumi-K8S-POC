@@ -8,7 +8,7 @@ gateway), conçue pour fonctionner avec le déploiement GitOps via Argo CD.
 - [Problème résolu](#problème-résolu)
 - [Schéma de tag](#schéma-de-tag)
 - [SHA par service](#sha-par-service)
-- [Le script build-images.ps1](#le-script-build-imagesps1)
+- [La target Nuke BuildImages](#la-target-nuke-buildimages)
 - [Workflow de développement](#workflow-de-développement)
 - [Publier une release (bump SemVer)](#publier-une-release-bump-semver)
 - [Pourquoi pas un tag `:dev` mutable](#pourquoi-pas-un-tag-dev-mutable)
@@ -81,9 +81,9 @@ Seul le service modifié est redéployé.
 
 ---
 
-## Le script build-images.ps1
+## La target Nuke BuildImages
 
-`scripts/build-images.ps1` automatise tout le cycle :
+`dotnet nuke BuildImages` (logique dans `build/Build.Images.cs`) automatise tout le cycle :
 
 1. Lit le SemVer dans `VERSION`.
 2. Pour chaque service : calcule son SHA, build l'image taguée, `kind load`.
@@ -91,24 +91,27 @@ Seul le service modifié est redéployé.
 
 Les `*ServiceResources` C# lisent déjà l'image depuis `pulumi config`
 (`orderApi:image`, `inventoryApi:image`, `gateway:image`) — **aucun changement de
-code C#** n'est nécessaire.
+code C# applicatif** n'est nécessaire.
 
 ### Tag `-dirty`
 
 Si le working tree a des modifications non commitées sur les paths d'un service,
 son tag est suffixé `-dirty` (ex: `1.0.0-aaa111-dirty`). Cela évite d'écraser une
 image « propre » avec un build local non commité, et signale clairement un état
-de travail non reproductible.
+de travail non reproductible. Désactivable via `--no-dirty-suffix`.
 
-### Options
+### Targets
 
 ```powershell
 # Build + tag + load + pulumi config set (s'arrête là)
-pwsh scripts/build-images.ps1
+dotnet nuke BuildImages
 
 # Workflow GitOps complet : build → pulumi up (render) → commit → push → sync Argo CD
-pwsh scripts/build-images.ps1 -Push
+dotnet nuke Publish
 ```
+
+> La passphrase du secrets provider Pulumi est requise (non interactif) :
+> exporter `PULUMI_CONFIG_PASSPHRASE` dans le shell, ou passer `--pulumi-passphrase`.
 
 ---
 
@@ -119,7 +122,7 @@ pwsh scripts/build-images.ps1 -Push
 ```powershell
 # 1. modifier le code d'un service
 # 2. rebuild + load + config (calcule le nouveau tag)
-pwsh scripts/build-images.ps1
+dotnet nuke BuildImages
 # 3. appliquer localement pour tester
 cd infra/Ecommerce.Infra && pulumi up --yes
 ```
@@ -130,13 +133,13 @@ En mode `gitops:enabled=false`, Pulumi déploie directement — pas de commit re
 
 ```powershell
 # tout enchaîner : build → render → commit → push → Argo CD sync
-pwsh scripts/build-images.ps1 -Push
+dotnet nuke Publish
 ```
 
 Ou manuellement :
 
 ```powershell
-pwsh scripts/build-images.ps1
+dotnet nuke BuildImages
 cd infra/Ecommerce.Infra && pulumi up --yes
 cd ../..
 git add gitops VERSION infra/Ecommerce.Infra/Pulumi.dev.yaml
@@ -184,5 +187,5 @@ Au prochain build, les 3 services passent en `1.1.0-<sha>`. Règle SemVer usuell
 | **SemVer + SHA par service** | ✅ | ✅ | ✅ |
 
 Le tag `:dev` reste utilisé comme **fallback du tout premier build** (valeur par
-défaut dans `Pulumi.dev.yaml`), avant le premier passage de `build-images.ps1`.
-Ensuite, les `pulumi config set` du script prennent le relais.
+défaut dans `Pulumi.dev.yaml`), avant le premier passage de `dotnet nuke BuildImages`.
+Ensuite, les `pulumi config set` de la target prennent le relais.

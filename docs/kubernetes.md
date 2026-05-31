@@ -117,7 +117,8 @@ kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.
 kind load docker-image quay.io/prometheus/node-exporter:v1.9.1           --name ecommerce
 ```
 
-> Le script `scripts/k8s_complete_launch.cmd` fait tout cela automatiquement.
+> `dotnet nuke Launch` fait tout cela automatiquement (cluster + images + build + pulumi up).
+> L'ancien script `scripts/k8s_complete_launch.cmd` est conservé pour mémoire.
 
 ### Vérifier que les images sont dans Kind
 
@@ -401,7 +402,8 @@ podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 && kin
 podman pull quay.io/prometheus/node-exporter:v1.9.1 && kind load docker-image quay.io/prometheus/node-exporter:v1.9.1 --name ecommerce
 ```
 
-> Le script `scripts/k8s_complete_launch.cmd` fait tout cela automatiquement depuis la racine du projet.
+> `dotnet nuke Launch` fait tout cela automatiquement depuis la racine du projet.
+> L'ancien script `scripts/k8s_complete_launch.cmd` est conservé pour mémoire.
 
 ### Étape 5 — Redéployer
 

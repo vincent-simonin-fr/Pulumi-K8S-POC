@@ -121,9 +121,9 @@ SLOs assouplis (p95 < 2s, errors < 10%) — l'objectif est d'observer la dégrad
 **Mode presale** (recommandé avant un vrai flash sale) :
 
 ```bash
-scripts\presale.cmd start   # pré-scale avant le pic → pods déjà chauds
+dotnet nuke PresaleStart   # pré-scale avant le pic → pods déjà chauds
 k6 run tests/Ecommerce.LoadTests/scenarios/spike.js
-scripts\presale.cmd stop    # retour au dimensionnement nominal
+dotnet nuke PresaleStop    # retour au dimensionnement nominal
 ```
 
 ---

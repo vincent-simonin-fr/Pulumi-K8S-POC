@@ -315,7 +315,7 @@ scrape_configs:
     metric_relabel_configs:
       - target_label: cluster
         replacement: inventory-db
-  # Note : le chart CNPG 0.22.0 n'expose pas de service de métriques pour l'opérateur.
+  # Note : le chart CNPG (0.23.x) n'expose pas de service de métriques pour l'opérateur.
   # cnpg-controller-manager-metrics-service n'existe pas dans cnpg-system.
 
   # ── Argo CD — métriques des composants GitOps ────────────────────────────

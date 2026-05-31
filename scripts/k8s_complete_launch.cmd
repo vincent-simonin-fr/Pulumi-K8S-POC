@@ -1,6 +1,14 @@
 @echo off
 setlocal
 
+:: ============================================================================
+::  ARCHIVE / REFERENCE — conserve pour memoire.
+::  Le chemin recommande est desormais :  dotnet nuke Launch
+::  (equivalent : RecreateCluster + PreloadImages + BuildImages + pulumi up).
+::  Ce script batch reste fonctionnel et autonome, mais n'est plus la voie
+::  principale (voir build/Build.cs et docs/versioning.md).
+:: ============================================================================
+
 :: Recreer le cluster Kind + deployer via Pulumi.
 :: Lancer depuis la RACINE du projet :
 ::   scripts\k8s_complete_launch.cmd
@@ -91,11 +99,44 @@ kind load docker-image registry.k8s.io/metrics-server/metrics-server:v0.7.2 --na
 echo.
 echo [4/5] Build et chargement des images applicatives (versioning SemVer + SHA)...
 :: ------------------------------------------------------------------
-:: build-images.ps1 calcule un tag {SemVer}-{SHA-par-service} (VERSION + git log),
-:: build + kind load chaque image, et pousse le tag dans Pulumi config (xxxApi:image).
-:: Seul un service réellement modifié change de tag → ArgoCD ne redéploie que lui.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-images.ps1"
-if errorlevel 1 ( echo ERREUR : build-images.ps1 a echoue & exit /b 1 )
+:: NOTE : ce script .cmd est conserve pour MEMOIRE / reference. Le chemin
+::        recommande est desormais `dotnet nuke Launch` (ou `dotnet nuke BuildImages`),
+::        qui calcule un tag {SemVer}-{SHA-par-service} (VERSION + git log),
+::        build + kind load chaque image, et pousse le tag dans Pulumi config.
+::        Le bloc ci-dessous reproduit cette logique en batch pour rester autonome.
+::
+:: Tag = {SemVer}-{SHA}  ou SemVer vient du fichier VERSION et SHA = dernier commit
+:: ayant touche les fichiers DU service. Seul un service modifie change de tag.
+
+:: -- SemVer de base (fichier VERSION a la racine) --
+set /p SEMVER=<"%~dp0..\VERSION"
+
+:: -- order-api : SHA des paths Order + Contracts --
+for /f %%i in ('git log -1 --format^=%%h -- src/Services/Order src/Shared/Ecommerce.Contracts') do set ORDER_SHA=%%i
+set ORDER_TAG=localhost/ecommerce/order-api:%SEMVER%-%ORDER_SHA%
+echo [order-api] build %ORDER_TAG%
+podman build -f docker/order-api/Dockerfile -t %ORDER_TAG% .
+if errorlevel 1 ( echo ERREUR : build order-api & exit /b 1 )
+kind load docker-image %ORDER_TAG% --name ecommerce
+pushd infra\Ecommerce.Infra & pulumi config set orderApi:image %ORDER_TAG% & popd
+
+:: -- inventory-api : SHA des paths Inventory + Contracts --
+for /f %%i in ('git log -1 --format^=%%h -- src/Services/Inventory src/Shared/Ecommerce.Contracts') do set INV_SHA=%%i
+set INV_TAG=localhost/ecommerce/inventory-api:%SEMVER%-%INV_SHA%
+echo [inventory-api] build %INV_TAG%
+podman build -f docker/inventory-api/Dockerfile -t %INV_TAG% .
+if errorlevel 1 ( echo ERREUR : build inventory-api & exit /b 1 )
+kind load docker-image %INV_TAG% --name ecommerce
+pushd infra\Ecommerce.Infra & pulumi config set inventoryApi:image %INV_TAG% & popd
+
+:: -- gateway : SHA du path Gateway --
+for /f %%i in ('git log -1 --format^=%%h -- src/Gateway') do set GW_SHA=%%i
+set GW_TAG=localhost/ecommerce/gateway:%SEMVER%-%GW_SHA%
+echo [gateway] build %GW_TAG%
+podman build -f docker/gateway/Dockerfile -t %GW_TAG% .
+if errorlevel 1 ( echo ERREUR : build gateway & exit /b 1 )
+kind load docker-image %GW_TAG% --name ecommerce
+pushd infra\Ecommerce.Infra & pulumi config set gateway:image %GW_TAG% & popd
 
 :: ------------------------------------------------------------------
 echo.

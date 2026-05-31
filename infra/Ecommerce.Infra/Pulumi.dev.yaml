@@ -1,13 +1,13 @@
 encryptionsalt: v1:xj4hoKmTd2c=:v1:FgcGyMtAeIhtCKbK:CQO6o0UvlevmAveQNq3ETt31hTip5A==
 config:
   # Images Docker (Podman préfixe les images locales avec localhost/)
-  # ⚠️ Ces 3 valeurs sont gérées automatiquement par scripts/build-images.ps1 :
+  # ⚠️ Ces 3 valeurs sont gérées automatiquement par `dotnet nuke BuildImages` :
   #    le script calcule un tag {SemVer}-{SHA-par-service} et fait `pulumi config set`.
   #    Les valeurs ":dev" ci-dessous ne servent que de fallback au tout premier build
   #    (avant le premier passage du script). Ne pas les éditer à la main ensuite.
-  orderApi:image: localhost/ecommerce/order-api:dev
-  inventoryApi:image: localhost/ecommerce/inventory-api:dev
-  gateway:image: localhost/ecommerce/gateway:dev
+  orderApi:image: localhost/ecommerce/order-api:1.0.0-30e7e62
+  inventoryApi:image: localhost/ecommerce/inventory-api:1.0.0-800a3a1
+  gateway:image: localhost/ecommerce/gateway:1.0.0-f2473ab
   # Port NodePort exposé sur Kind
   gateway:nodePort: "30080"
   # Réservation de stock
@@ -100,9 +100,9 @@ config:
 
   # Alternative immédiate (sans pulumi up) :
 
-  #   scripts\presale.cmd start
+  #   dotnet nuke PresaleStart
 
-  #   scripts\presale.cmd stop
+  #   dotnet nuke PresaleStop
   presale:enabled: "false"
   presale:inventoryApiMin: "3" # pods inventory-api en attente du pic
   presale:orderApiMin: "3" # pods order-api en attente du pic

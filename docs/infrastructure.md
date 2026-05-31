@@ -478,14 +478,14 @@ pulumi config set presale:enabled false
 pulumi up --yes
 ```
 
-### Activation via script (urgence, effet en secondes)
+### Activation via Nuke (urgence, effet en secondes)
 
 ```bash
 # Avant le flash sale (patch direct kubectl, sans pulumi up)
-scripts\presale.cmd start
+dotnet nuke PresaleStart
 
 # Après le flash sale
-scripts\presale.cmd stop
+dotnet nuke PresaleStop
 ```
 
 > ⚠️ Le prochain `pulumi up` avec `presale:enabled=false` écrasera les patches kubectl.

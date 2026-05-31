@@ -30,3 +30,8 @@ appsettings.*.json
 ## Logs
 logs/
 *.log
+
+## Nuke (automatisation build)
+# .nuke/parameters.json et build.schema.json sont versionnés (marqueur racine +
+# schéma d'autocomplétion). Seuls les artefacts temporaires d'exécution sont ignorés.
+.nuke/temp/
