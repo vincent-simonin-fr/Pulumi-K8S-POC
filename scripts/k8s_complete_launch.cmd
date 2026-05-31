@@ -89,19 +89,13 @@ kind load docker-image registry.k8s.io/metrics-server/metrics-server:v0.7.2 --na
 
 :: ------------------------------------------------------------------
 echo.
-echo [4/5] Build et chargement des images applicatives...
+echo [4/5] Build et chargement des images applicatives (versioning SemVer + SHA)...
 :: ------------------------------------------------------------------
-podman build -f docker/order-api/Dockerfile -t localhost/ecommerce/order-api:dev .
-if errorlevel 1 ( echo ERREUR : build order-api & exit /b 1 )
-kind load docker-image localhost/ecommerce/order-api:dev --name ecommerce
-
-podman build -f docker/inventory-api/Dockerfile -t localhost/ecommerce/inventory-api:dev .
-if errorlevel 1 ( echo ERREUR : build inventory-api & exit /b 1 )
-kind load docker-image localhost/ecommerce/inventory-api:dev --name ecommerce
-
-podman build -f docker/gateway/Dockerfile -t localhost/ecommerce/gateway:dev .
-if errorlevel 1 ( echo ERREUR : build gateway & exit /b 1 )
-kind load docker-image localhost/ecommerce/gateway:dev --name ecommerce
+:: build-images.ps1 calcule un tag {SemVer}-{SHA-par-service} (VERSION + git log),
+:: build + kind load chaque image, et pousse le tag dans Pulumi config (xxxApi:image).
+:: Seul un service réellement modifié change de tag → ArgoCD ne redéploie que lui.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-images.ps1"
+if errorlevel 1 ( echo ERREUR : build-images.ps1 a echoue & exit /b 1 )
 
 :: ------------------------------------------------------------------
 echo.

@@ -1,6 +1,10 @@
 encryptionsalt: v1:xj4hoKmTd2c=:v1:FgcGyMtAeIhtCKbK:CQO6o0UvlevmAveQNq3ETt31hTip5A==
 config:
   # Images Docker (Podman préfixe les images locales avec localhost/)
+  # ⚠️ Ces 3 valeurs sont gérées automatiquement par scripts/build-images.ps1 :
+  #    le script calcule un tag {SemVer}-{SHA-par-service} et fait `pulumi config set`.
+  #    Les valeurs ":dev" ci-dessous ne servent que de fallback au tout premier build
+  #    (avant le premier passage du script). Ne pas les éditer à la main ensuite.
   orderApi:image: localhost/ecommerce/order-api:dev
   inventoryApi:image: localhost/ecommerce/inventory-api:dev
   gateway:image: localhost/ecommerce/gateway:dev

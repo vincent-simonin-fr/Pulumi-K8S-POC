@@ -18,6 +18,8 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 | [Dev local & Tests](docs/dev-local.md) | `podman-compose`, tests d'intégration, migrations EF Core, OpenAPI, observabilité |
 | [k9s](docs/k9s.md) | Interface terminal Kubernetes — logs, shell, describe sans Dashboard |
 | [Tests de charge](docs/load-testing.md) | k6 — scénarios baseline/load/stress/spike, intégration Prometheus |
+| [Argo CD / GitOps](docs/argocd.md) | Déploiement GitOps des apps, credential dépôt privé, RBAC, SSO |
+| [Versioning des images](docs/versioning.md) | Tags SemVer + SHA par service, build-images.ps1, redéploiement ciblé |
 
 ---
 
@@ -133,6 +135,48 @@ curl http://localhost:30080/health/inventory   # inventory-api
 - Gateway : `http://localhost:30080`
 - Grafana : `http://localhost:30030`
 - Jaeger : `http://localhost:30686`
+
+---
+
+## GitOps avec Argo CD (optionnel)
+
+Les applications (order-api, inventory-api, gateway) peuvent être déployées en
+GitOps : Pulumi rend leurs manifestes en YAML dans `gitops/apps/`, et Argo CD les
+synchronise depuis Git. L'infrastructure (CNPG, KEDA, secrets, observabilité,
+Argo CD) reste gérée par Pulumi en direct.
+
+```bash
+pulumi config set gitops:enabled true
+pulumi config set gitops:repoUrl https://github.com/<user>/<repo>.git
+pulumi up --yes                                   # rend les YAML + crée l'Application
+git add gitops && git commit -m "gitops: apps" && git push
+```
+
+Les images sont versionnées en `{SemVer}-{SHA-par-service}` via
+`scripts/build-images.ps1`, de sorte qu'un changement sur un seul service ne
+redéploie que celui-ci. Détails : [docs/versioning.md](docs/versioning.md).
+
+### Accès à un dépôt privé
+
+Argo CD clone le dépôt distant : pour un dépôt **privé**, il faut lui fournir un
+credential, sinon l'Application reste en `ComparisonError: authentication required`.
+
+```powershell
+$pat = "ghp_xxxxxxxxxxxx"          # PAT GitHub (scope repo)
+kubectl create secret generic repo-pulumi-k8s-poc -n argocd `
+  --from-literal=type=git `
+  --from-literal=url=https://github.com/<user>/<repo>.git `
+  --from-literal=username=<user> `
+  --from-literal=password=$pat
+kubectl label secret repo-pulumi-k8s-poc -n argocd `
+  argocd.argoproj.io/secret-type=repository
+```
+
+Le label `argocd.argoproj.io/secret-type=repository` et la correspondance exacte
+de l'`url` avec le `repoURL` de l'Application sont obligatoires. Procédure complète
+(création du PAT, diagnostic, workflow) : voir [docs/argocd.md](docs/argocd.md).
+
+Revenir en mode Pulumi direct : `pulumi config set gitops:enabled false && pulumi up --yes`.
 
 ---
 

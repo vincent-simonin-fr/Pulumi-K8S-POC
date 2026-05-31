@@ -6,7 +6,9 @@
 - [Installation](#installation)
 - [Accès à l'interface](#accès-à-linterface)
 - [CLI argocd](#cli-argocd)
+- [Accès à un dépôt Git privé (credential repository)](#accès-à-un-dépôt-git-privé-credential-repository)
 - [Créer une Application (GitOps)](#créer-une-application-gitops)
+- [GitOps des applications via Pulumi render](#gitops-des-applications-via-pulumi-render)
 - [RBAC](#rbac)
 - [Mot de passe admin](#mot-de-passe-admin)
 - [SSO (OIDC)](#sso-oidc)
@@ -87,6 +89,10 @@ kubectl port-forward -n argocd svc/argocd-server 8080:80
 
 Ouvrir **http://localhost:8080**
 
+> Sur Windows + Podman, `kubectl port-forward` peut échouer pour le gRPC du CLI
+> (`argocd login`). L'UI web reste accessible. Pour piloter Argo CD sans CLI,
+> utiliser `kubectl` directement (voir sections ci-dessous).
+
 ### Production (avec ingress)
 
 L'ingress est créé automatiquement quand `ingress:enabled: "true"` dans `Pulumi.dev.yaml`.  
@@ -128,22 +134,126 @@ argocd login argocd.wizzz.com --username admin
 argocd app list
 
 # Voir le statut d'une Application
-argocd app get ecommerce
+argocd app get ecommerce-apps
 
 # Synchroniser manuellement (si auto-sync désactivé)
-argocd app sync ecommerce
+argocd app sync ecommerce-apps
 
 # Voir le diff Git ↔ cluster
-argocd app diff ecommerce
+argocd app diff ecommerce-apps
 
 # Historique des syncs
-argocd app history ecommerce
+argocd app history ecommerce-apps
 
 # Rollback vers une révision précédente
-argocd app rollback ecommerce <revision-id>
+argocd app rollback ecommerce-apps <revision-id>
 
 # Changer de contexte (multi-cluster)
 argocd context
+```
+
+---
+
+## Accès à un dépôt Git privé (credential repository)
+
+Argo CD tourne **dans le cluster** : il clone le dépôt distant, jamais le disque
+local. Pour un dépôt **privé**, il faut lui fournir un credential, sinon
+l'`Application` reste en erreur :
+
+```
+ComparisonError: Failed to load target state: failed to generate manifest for
+source 1 of 1: rpc error: code = Unknown desc = failed to list refs:
+authentication required
+```
+
+### 1. Créer un Personal Access Token (PAT) GitHub
+
+Le plus simple est un **token classic** :
+
+```
+GitHub → Settings → Developer settings
+  → Personal access tokens → Tokens (classic)
+  → Generate new token (classic)
+  → cocher le scope "repo" (Full control of private repositories)
+  → Generate token  →  copier le ghp_xxxx (affiché une seule fois)
+```
+
+Alternative **fine-grained** : Repository access = le dépôt concerné, puis
+Repository permissions → **Contents: Read-only**. La liste des permissions
+n'apparaît **qu'après** avoir sélectionné le dépôt dans "Repository access".
+
+### 2. Créer le Secret repository dans Argo CD
+
+Le credential est un Secret K8s dans le namespace `argocd`, porteur du label
+`argocd.argoproj.io/secret-type: repository`. **Sans ce label, Argo CD ignore
+le Secret.**
+
+PowerShell (le PAT reste en local) :
+
+```powershell
+$pat  = "ghp_xxxxxxxxxxxx"          # PAT GitHub
+$user = "vincent-simonin-fr"
+$repo = "https://github.com/vincent-simonin-fr/Pulumi-K8S-POC.git"
+
+kubectl create secret generic repo-pulumi-k8s-poc `
+  -n argocd `
+  --from-literal=type=git `
+  --from-literal=url=$repo `
+  --from-literal=username=$user `
+  --from-literal=password=$pat
+
+kubectl label secret repo-pulumi-k8s-poc -n argocd `
+  argocd.argoproj.io/secret-type=repository
+```
+
+Bash :
+
+```bash
+kubectl create secret generic repo-pulumi-k8s-poc -n argocd \
+  --from-literal=type=git \
+  --from-literal=url=https://github.com/vincent-simonin-fr/Pulumi-K8S-POC.git \
+  --from-literal=username=vincent-simonin-fr \
+  --from-literal=password=ghp_xxxxxxxxxxxx
+
+kubectl label secret repo-pulumi-k8s-poc -n argocd \
+  argocd.argoproj.io/secret-type=repository
+```
+
+### 3. Points de vérification
+
+L'authentification échoue si l'un de ces points est faux :
+
+- **Label** `argocd.argoproj.io/secret-type=repository` présent sur le Secret.
+- **`url` du Secret identique au caractère près** au `spec.source.repoURL` de
+  l'`Application` (le `.git` final compte).
+- PAT valide avec le scope `repo` (ou Contents: Read-only).
+
+Diagnostic :
+
+```bash
+# URL de l'Application
+kubectl get application ecommerce-apps -n argocd -o jsonpath="{.spec.source.repoURL}"
+
+# URL + label du Secret
+kubectl get secret repo-pulumi-k8s-poc -n argocd --show-labels
+kubectl get secret repo-pulumi-k8s-poc -n argocd -o jsonpath="{.data.url}" | base64 -d
+```
+
+### 4. Forcer un rafraîchissement
+
+Après création du Secret, forcer Argo CD à recomparer :
+
+```bash
+kubectl annotate application ecommerce-apps -n argocd \
+  argocd.argoproj.io/refresh=hard --overwrite
+```
+
+État attendu :
+
+```bash
+kubectl get application ecommerce-apps -n argocd
+# NAME             SYNC STATUS   HEALTH STATUS
+# ecommerce-apps   Synced        Healthy
 ```
 
 ---
@@ -216,6 +326,95 @@ Stratégie recommandée :
 
 ---
 
+## GitOps des applications via Pulumi render
+
+Le projet implémente cette coexistence via le flag `gitops:enabled`. Quand il vaut
+`true`, Pulumi **ne déploie plus** les 3 apps directement : il les **rend en YAML**
+dans `gitops/apps/`, et Argo CD les synchronise depuis Git.
+
+```
+pulumi up (render) → gitops/apps/*.yaml → git push → Argo CD clone → déploie → cluster
+```
+
+| Couche | Géré par | Composants |
+|--------|----------|------------|
+| Infrastructure | Pulumi (apply direct) | CNPG, KEDA, secrets ESO, observabilité, Argo CD, metrics-server |
+| Applications | Argo CD (GitOps) | order-api, inventory-api, gateway |
+
+### Implémentation
+
+- **`EcommerceStack.cs`** — un Provider `RenderYamlToDirectory` (`gitops:outputDir`)
+  est attaché aux 3 ComponentResources applicatives via `AppOpts()` quand
+  `gitops:enabled = true`. Les ressources sont écrites en YAML au lieu d'être
+  appliquées au cluster.
+- **`GitopsResources.cs`** — crée l'`Application` `ecommerce-apps` (via `kubectl
+  apply` pour contourner le cache GVK, identique à CNPG/KEDA). Caractéristiques :
+  - `syncPolicy.automated` : `prune` (supprime les ressources retirées de Git) +
+    `selfHeal` (corrige toute dérive `kubectl edit` vers l'état Git).
+  - `ignoreDifferences` sur `/spec/replicas` des Deployments : **indispensable**,
+    sinon Argo CD réinitialiserait le nombre de réplicas décidé par HPA (order-api,
+    gateway) et KEDA (inventory-api) en boucle.
+  - `directory.recurse: true` : parcourt `gitops/apps/` récursivement (sous-dossiers
+    `0-crd/` et `1-manifest/` générés par le render Pulumi ; `0-crd/` est vide ici,
+    les apps ne définissent aucune CRD).
+
+### Activation
+
+```bash
+pulumi config set gitops:enabled true
+pulumi config set gitops:repoUrl https://github.com/<user>/<repo>.git
+pulumi up --yes                          # rend les YAML + crée l'Application
+git add gitops && git commit -m "gitops: apps" && git push
+# → Argo CD synchronise et (re)déploie les apps depuis Git
+```
+
+⚠️ Activer le flag fait que Pulumi **retire les 3 apps du cluster** (replace via
+changement de provider). Court downtime jusqu'au premier sync Argo CD.
+
+### Configuration (Pulumi.dev.yaml)
+
+```yaml
+gitops:enabled: "true"
+gitops:outputDir: "../../gitops/apps"   # chemin local (relatif à infra/Ecommerce.Infra)
+gitops:path: "gitops/apps"              # chemin dans le dépôt Git
+gitops:targetRevision: "main"           # branche suivie par Argo CD
+gitops:repoUrl: "https://github.com/vincent-simonin-fr/Pulumi-K8S-POC.git"
+```
+
+### Workflow de modification d'une application
+
+```bash
+# 1. modifier le code C# de l'app (resources, env, image...)
+# 2. rendre les manifests
+pulumi up --yes            # écrit gitops/apps/*.yaml
+# 3. publier dans Git
+git add gitops && git commit -m "apps: <changement>" && git push
+# 4. Argo CD synchronise automatiquement (ou : argocd app sync ecommerce-apps)
+```
+
+Un `kubectl edit` / `kubectl scale` manuel sur une app sera réécrasé par
+`selfHeal` (sauf `spec/replicas`, exclu pour HPA/KEDA).
+
+### Tester en local avant de commiter
+
+Le render produit du YAML applicable directement, sans Git ni Argo CD :
+
+```bash
+kubectl apply -f gitops/apps/ --dry-run=server   # validation
+kubectl apply -f gitops/apps/                     # déploiement local de test
+```
+
+Argo CD (`selfHeal`) adoptera ces ressources au premier sync — pas de conflit.
+
+### Revenir en mode Pulumi direct
+
+```bash
+pulumi config set gitops:enabled false
+pulumi up --yes      # Pulumi redéploie les apps directement (sans Git)
+```
+
+---
+
 ## RBAC
 
 Configuration actuelle (définie dans `ArgocdResources.cs`) :
@@ -256,6 +455,13 @@ data:
 
 ```bash
 kubectl get secret argocd-initial-admin-secret -n argocd -o json | python -c "import sys,json,base64; d=json.load(sys.stdin);  print(base64.b64decode(d['data']['password']).decode())"
+```
+
+Sur Windows (PowerShell) :
+
+```powershell
+$b64 = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}"
+[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
 ```
 
 ### Changer le mot de passe (via CLI)
