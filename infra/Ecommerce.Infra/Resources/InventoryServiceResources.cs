@@ -68,6 +68,9 @@ public class InventoryServiceResources : ComponentResource
                     },
                     Spec = new PodSpecArgs
                     {
+                        // Anti-affinité soft : répartit les réplicas inventory-api sur des nœuds
+                        // distincts en prod multi-nœuds (no-op sur Kind mono-nœud). Voir K8sAffinity.
+                        Affinity = K8sAffinity.SpreadAcrossNodes("inventory-api"),
                         // Même logique que order-api : psql vérifie que la base existe
                         // et que les credentials fonctionnent avant de laisser démarrer l'API.
                         InitContainers = new ContainerArgs

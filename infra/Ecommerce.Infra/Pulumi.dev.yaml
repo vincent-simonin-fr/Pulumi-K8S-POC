@@ -7,7 +7,7 @@ config:
   #    (avant le premier passage du script). Ne pas les éditer à la main ensuite.
   orderApi:image: localhost/ecommerce/order-api:1.0.0-30e7e62
   inventoryApi:image: localhost/ecommerce/inventory-api:1.0.0-800a3a1
-  gateway:image: localhost/ecommerce/gateway:1.0.0-f2473ab-dirty
+  gateway:image: localhost/ecommerce/gateway:1.0.0-7234f8b
   # Port NodePort exposé sur Kind
   gateway:nodePort: "30080"
   # Réservation de stock

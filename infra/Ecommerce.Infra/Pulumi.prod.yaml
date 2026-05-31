@@ -1,41 +1,48 @@
 config:
-  # ── Images (depuis un container registry en production) ──────────────────────
-  # Remplacer par votre registry : ghcr.io/<org>/... ou docker.io/<org>/...
-  orderApi:image: ghcr.io/wizzz/order-api:latest
-  inventoryApi:image: ghcr.io/wizzz/inventory-api:latest
-  gateway:image: ghcr.io/wizzz/gateway:latest
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║  CONFIGURATION PRODUCTION — cluster Kubernetes multi-nœuds                 ║
+  # ║                                                                            ║
+  # ║  Diffère de Pulumi.dev.yaml (Kind mono-nœud) sur :                         ║
+  # ║   - CNPG 3 instances + stockage RÉSEAU (HA réelle)                         ║
+  # ║   - Ingress + TLS Let's Encrypt (au lieu de NodePorts)                     ║
+  # ║   - Replicas/HPA dimensionnés prod                                         ║
+  # ║   - Anti-affinité soft active (répartit les pods sur les nœuds)            ║
+  # ║                                                                            ║
+  # ║  ⚠️ Les mots de passe NE SONT PAS ici : les poser via                      ║
+  # ║     pulumi config set --secret ... (voir section Secrets)                  ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝
 
-  # ── Ingress + TLS (Let's Encrypt) ────────────────────────────────────────────
-  # Le domaine est configurable ici — toutes les URLs en dépendent :
-  #   wizzz.com          → gateway  (API publique)
-  #   grafana.wizzz.com  → Grafana  (monitoring, basic-auth requis)
-  #   jaeger.wizzz.com   → Jaeger   (tracing,    basic-auth requis)
+  # ── Images (registry de production) ──────────────────────────────────────────
+  # Remplacer par votre registry. En GitOps, ces valeurs sont gérées par le
+  # pipeline de build (tags immuables {SemVer}-{SHA}). Voir docs/versioning.md.
+  orderApi:image: ghcr.io/wizzz/order-api:1.0.0
+  inventoryApi:image: ghcr.io/wizzz/inventory-api:1.0.0
+  gateway:image: ghcr.io/wizzz/gateway:1.0.0
+
+  # ── Ingress + TLS (Let's Encrypt via cert-manager) ───────────────────────────
+  #   wizzz.com          → gateway (API publique)
+  #   grafana.wizzz.com  → Grafana (basic-auth requis)
+  #   jaeger.wizzz.com   → Jaeger  (basic-auth requis)
   ingress:enabled: "true"
   ingress:domain: "wizzz.com"
   ingress:acmeEmail: "ops@wizzz.com"
   ingress:certManagerVersion: "v1.16.2"
   ingress:nginxVersion: "4.11.3"
-  # Générer le htpasswd : htpasswd -nb admin <password>
-  # Puis chiffrer      : pulumi config set --secret ingress:monitoringBasicAuthHtpasswd "<valeur>"
-  # ingress:monitoringBasicAuthHtpasswd: <chiffré par --secret>
-
-  # ── Grafana — auth native (IngressEnabled désactive l'auth anonyme) ───────────
-  # pulumi config set --secret observability:grafanaAdminPassword <password>
-  # observability:grafanaAdminPassword: <chiffré par --secret>
+  # htpasswd -nb admin <password>  →  pulumi config set --secret ingress:monitoringBasicAuthHtpasswd "<valeur>"
 
   # ── Réservation de stock ─────────────────────────────────────────────────────
   reservation:ttlMinutes: "10"
   reservation:checkIntervalSeconds: "30"
 
-  # ── Réplicas — minimums de production ────────────────────────────────────────
-  # ⚠️ db et rabbitmq : garder à 1 sans réplication configurée
+  # ── Réplicas de base (minimums avant scaling HPA/KEDA) ───────────────────────
+  # Note : les valeurs effectives sont pilotées par HPA (order/gateway) et KEDA
+  # (inventory). Ces "replicas" servent de point de départ au déploiement.
   replicas:orderApi: "2"
   replicas:inventoryApi: "2"
   replicas:gateway: "2"
-  replicas:db: "1"
-  replicas:rabbitmq: "1"
+  replicas:rabbitmq: "1"   # ⚠️ SPOF — voir note HA RabbitMQ en bas de fichier
 
-  # ── Resources — à ajuster selon les nodes du cluster ─────────────────────────
+  # ── Resources CPU/mémoire (à ajuster selon les nœuds du cluster) ─────────────
   resources:orderApiCpuRequest: "200m"
   resources:orderApiCpuLimit: "1000m"
   resources:orderApiMemoryRequest: "256Mi"
@@ -52,35 +59,94 @@ config:
   resources:gatewayMemoryLimit: "256Mi"
 
   # ── Secrets ───────────────────────────────────────────────────────────────────
-  # Clés non sensibles en clair, mots de passe via --secret :
+  # ⚠️ orderDbUser/inventoryDbUser = "app" : c'est le user OWNER créé par CNPG
+  #    (bootstrap.initdb.owner). NE PAS mettre "postgres" — l'app se connecte en 'app'.
+  # Mots de passe via --secret :
   #   pulumi config set --secret secrets:orderDbPassword     <password>
   #   pulumi config set --secret secrets:inventoryDbPassword <password>
   #   pulumi config set --secret secrets:rabbitmqPassword    <password>
-  secrets:orderDbUser: postgres
+  secrets:orderDbUser: app
   secrets:orderDbName: order_db
-  secrets:inventoryDbUser: postgres
+  secrets:inventoryDbUser: app
   secrets:inventoryDbName: inventory_db
   secrets:rabbitmqUser: admin
 
-  # ── Observabilité ─────────────────────────────────────────────────────────────
-  # NodePorts ignorés en prod (IngressEnabled = true → services ClusterIP)
+  # ── Observabilité (services ClusterIP en prod, exposés via Ingress) ──────────
   observability:otelVersion: "0.153.0"
   observability:jaegerVersion: "1.76.0"
   observability:prometheusVersion: "v3.11.3"
   observability:grafanaVersion: "13.0.1-security-01"
+  # pulumi config set --secret observability:grafanaAdminPassword <password>
 
-  # ── HPA — scaling automatique ─────────────────────────────────────────────────
+  # ── HPA — order-api + gateway (inventory-api = KEDA, voir plus bas) ───────────
+  # ⚠️ PAS de hpa:inventoryApi* : inventory-api est scalé par KEDA (queue RabbitMQ),
+  #    pas par HPA CPU. Mettre une clé hpa:inventoryApi serait ignorée.
   hpa:orderApiEnabled: "true"
   hpa:orderApiMin: "2"
   hpa:orderApiMax: "10"
   hpa:orderApiCpu: "70"
 
-  hpa:inventoryApiEnabled: "true"
-  hpa:inventoryApiMin: "2"
-  hpa:inventoryApiMax: "10"
-  hpa:inventoryApiCpu: "70"
-
   hpa:gatewayEnabled: "true"
   hpa:gatewayMin: "2"
   hpa:gatewayMax: "5"
   hpa:gatewayCpu: "70"
+
+  # ── CNPG — PostgreSQL HA (le gain principal du multi-nœuds) ──────────────────
+  # 3 instances = 1 primary + 2 replicas, réparties sur des nœuds distincts par
+  # l'anti-affinité CNPG. Perte d'un nœud → un replica est promu primary.
+  #
+  # ⚠️ storageClass = STOCKAGE RÉSEAU OBLIGATOIRE en multi-nœuds.
+  #    Avec local-path, la perte d'un nœud rend le PVC du replica inaccessible →
+  #    casse la HA. Exemples : "gp3" (AWS), "premium-rwo" (GKE), "managed-csi"
+  #    (Azure), "ceph-block" (Rook), "longhorn" (on-prem).
+  cnpg:version: "0.23.2"
+  cnpg:orderInstances: "3"
+  cnpg:inventoryInstances: "3"
+  cnpg:poolerInstances: "2"
+  cnpg:storageClass: "gp3"      # ← ADAPTER à votre provider de stockage réseau
+  cnpg:storageSize: "10Gi"
+
+  # ── KEDA — autoscaling inventory-api sur la profondeur de queue RabbitMQ ──────
+  keda:version: "2.17.0"
+  keda:queueName: "product-added-to-cart"
+  keda:queueLength: "5"
+  keda:inventoryApiMin: "2"     # prod : 2 minimum (HA, pas de cold-start total)
+  keda:inventoryApiMax: "10"
+  keda:pollingInterval: "5"
+  keda:cooldownPeriod: "60"
+  keda:scaleDownWindow: "240"
+
+  # ── Metrics Server — requis par HPA CPU ──────────────────────────────────────
+  # ⚠️ kubeletInsecureTls = FALSE en prod : les kubelets d'un vrai cluster ont des
+  #    certificats valides (signés par le cluster CA). Le flag insecure est dev-only.
+  metricsServer:version: "3.12.2"
+  metricsServer:kubeletInsecureTls: "false"
+
+  # ── Argo CD — GitOps (HA : 2 replicas par composant stateless) ───────────────
+  argocd:version: "7.8.3"
+  argocd:serverReplicas: "2"
+  argocd:repoServerReplicas: "2"
+  argocd:applicationSetReplicas: "2"
+  # pulumi config set --secret argocd:adminPasswordHash <bcrypt-hash>
+
+  # ── GitOps des applications (prod : déploiement par Argo CD depuis Git) ───────
+  gitops:enabled: "true"
+  gitops:outputDir: "../../gitops/apps"
+  gitops:path: "gitops/apps"
+  gitops:targetRevision: "main"
+  # gitops:repoUrl: "https://github.com/<org>/<repo>.git"
+
+  # ╔══════════════════════════════════════════════════════════════════════════╗
+  # ║  HA RESTANTE — composants encore SPOF (chantiers post-déploiement)         ║
+  # ║                                                                            ║
+  # ║  RabbitMQ (replicas=1) : SPOF critique (bus d'événements). Pour la HA :     ║
+  # ║    déployer le RabbitMQ Cluster Operator (RabbitmqCluster 3 nœuds + quorum  ║
+  # ║    queues). Nécessite du code (RabbitmqResources.cs calqué sur CNPG).       ║
+  # ║                                                                            ║
+  # ║  Redis (replicas=1) : SPOF non critique (cache, fallback gracieux). Pour    ║
+  # ║    la HA : Redis Operator (RedisFailover = Sentinel). Optionnel.            ║
+  # ║                                                                            ║
+  # ║  Anti-affinité apps : SOFT (codée dans K8sAffinity.cs), active en prod.     ║
+  # ║    Répartit order/inventory/gateway sur les nœuds. Pour forcer HARD         ║
+  # ║    (jamais 2 pods/nœud), faire évoluer K8sAffinity (clusters ≥ N nœuds).    ║
+  # ╚══════════════════════════════════════════════════════════════════════════╝

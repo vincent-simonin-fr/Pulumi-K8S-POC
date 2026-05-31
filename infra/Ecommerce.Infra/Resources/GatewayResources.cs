@@ -76,6 +76,9 @@ public class GatewayResources : ComponentResource
                     },
                     Spec = new PodSpecArgs
                     {
+                        // Anti-affinité soft : répartit les réplicas gateway sur des nœuds
+                        // distincts en prod multi-nœuds (no-op sur Kind mono-nœud). Voir K8sAffinity.
+                        Affinity = K8sAffinity.SpreadAcrossNodes("gateway"),
                         Containers = new ContainerArgs
                         {
                             Name            = "gateway",

@@ -73,6 +73,9 @@ public class OrderServiceResources : ComponentResource
                     },
                     Spec = new PodSpecArgs
                     {
+                        // Anti-affinité soft : répartit les réplicas order-api sur des nœuds
+                        // distincts en prod multi-nœuds (no-op sur Kind mono-nœud). Voir K8sAffinity.
+                        Affinity = K8sAffinity.SpreadAcrossNodes("order-api"),
                         // Attend que la base order_db soit réellement accessible avant de démarrer.
                         // pg_isready retourne true dès que postgres accepte les connexions TCP,
                         // AVANT que l'initialisation du catalogue soit terminée.

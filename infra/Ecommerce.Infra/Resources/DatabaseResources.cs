@@ -26,6 +26,18 @@ public class DatabaseResourcesArgs
 
     /// <summary>Nombre de pods PgBouncer par Pooler (1 = dev, 2 = prod recommandé). Configurable via cnpg:poolerInstances.</summary>
     public int PoolerInstances { get; set; } = 1;
+
+    /// <summary>
+    /// StorageClass des volumes PostgreSQL. Configurable via cnpg:storageClass.
+    /// Dev (Kind) : "standard" (rancher.io/local-path — disque local du nœud).
+    /// Prod multi-nœuds : OBLIGATOIREMENT un stockage RÉSEAU (gp3, pd-ssd, ceph, longhorn).
+    /// Avec local-path en prod, la perte d'un nœud rend le PVC inaccessible → casse la HA
+    /// CNPG (le replica ne peut pas être reschedulé ailleurs avec ses données).
+    /// </summary>
+    public string StorageClass { get; set; } = "standard";
+
+    /// <summary>Taille des volumes PostgreSQL. Configurable via cnpg:storageSize. Dev : 1Gi, prod : 10Gi+.</summary>
+    public string StorageSize { get; set; } = "1Gi";
 }
 
 /// <summary>
@@ -313,8 +325,8 @@ spec:
   instances: {instances}
   imageName: ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
   storage:
-    size: 1Gi
-    storageClass: standard
+    size: {args.StorageSize}
+    storageClass: {args.StorageClass}
   postgresql:
     parameters:
       # max_connections=200 : pic mesuré sous stress 700 VU = ~133 connexions

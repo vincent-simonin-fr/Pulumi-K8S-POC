@@ -134,6 +134,9 @@ public class EcommerceStack : Stack
             OrderInstances      = cnpgCfg.GetInt32("orderInstances")     ?? 1,
             InventoryInstances  = cnpgCfg.GetInt32("inventoryInstances") ?? 1,
             PoolerInstances     = cnpgCfg.GetInt32("poolerInstances")    ?? 1,
+            // Dev : standard (local-path). Prod multi-nœuds : stockage RÉSEAU obligatoire.
+            StorageClass        = cnpgCfg.Get("storageClass")            ?? "standard",
+            StorageSize         = cnpgCfg.Get("storageSize")             ?? "1Gi",
         }, cnpgSecretsDep);
 
         var mqResources = new MessagingResources("messaging", new MessagingResourcesArgs
