@@ -17,7 +17,7 @@ spec:
       - envFrom:
         - configMapRef:
             name: gateway-config
-        image: localhost/ecommerce/gateway:1.0.0-f2473ab
+        image: localhost/ecommerce/gateway:1.0.0-f2473ab-dirty
         imagePullPolicy: IfNotPresent
         livenessProbe:
           failureThreshold: 5
