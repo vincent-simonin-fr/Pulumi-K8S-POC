@@ -1,0 +1,9 @@
+apiVersion: v1
+data:
+  ASPNETCORE_ENVIRONMENT: Production
+  RabbitMQ__Host: rabbitmq
+  RabbitMQ__VirtualHost: /
+kind: ConfigMap
+metadata:
+  name: order-api-config
+  namespace: ecommerce

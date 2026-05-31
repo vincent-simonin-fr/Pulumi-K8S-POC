@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-api
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-api
+  template:
+    metadata:
+      labels:
+        app: inventory-api
+    spec:
+      containers:
+      - env:
+        - name: ASPNETCORE_ENVIRONMENT
+          value: Production
+        - name: RabbitMQ__Host
+          value: rabbitmq
+        - name: RabbitMQ__VirtualHost
+          value: /
+        - name: Reservation__TtlMinutes
+          value: "10"
+        - name: Reservation__CheckIntervalSeconds
+          value: "30"
+        - name: OpenTelemetry__Endpoint
+          value: http://otel-collector.monitoring.svc.cluster.local:4317
+        - name: ConnectionStrings__Redis
+          value: redis:6379
+        envFrom:
+        - secretRef:
+            name: inventory-db-credentials
+        - secretRef:
+            name: rabbitmq-credentials
+        image: localhost/ecommerce/inventory-api:dev
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 40
+          periodSeconds: 15
+          timeoutSeconds: 5
+        name: inventory-api
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          failureThreshold: 24
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: "1"
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 192Mi
+      initContainers:
+      - command:
+        - /bin/bash
+        - -c
+        - echo 'Waiting for inventory-db-rw:5432 (TCP)...' && until (echo > /dev/tcp/inventory-db-rw/5432)
+          2>/dev/null; do sleep 1; done && echo 'inventory-db-rw TCP ready. Waiting
+          for RabbitMQ:5672 (TCP)...' && until (echo > /dev/tcp/rabbitmq/5672) 2>/dev/null;
+          do sleep 1; done && echo 'All dependencies TCP-ready.'
+        image: postgres:16-alpine
+        name: wait-for-dependencies

@@ -26,6 +26,7 @@ public class EcommerceStack : Stack
         var cnpgCfg          = new Config("cnpg");
         var argocdCfg        = new Config("argocd");
         var metricsServerCfg = new Config("metricsServer");
+        var gitopsCfg        = new Config("gitops");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -173,6 +174,43 @@ public class EcommerceStack : Stack
             KedaVersion     = kedaCfg.Get("version")              ?? "2.17.0"
         });
 
+        // ── GitOps (ArgoCD) ───────────────────────────────────────────────────
+        // Quand gitops:enabled = true, les 3 apps (order-api, inventory-api, gateway)
+        // ne sont PLUS appliquées au cluster par Pulumi : elles sont rendues en YAML
+        // dans gitops/apps/ via un Provider dédié (RenderYamlToDirectory).
+        // ArgoCD surveille ensuite ce dossier dans Git et déploie les apps.
+        //
+        // Pulumi conserve la gestion directe de toute l'infra (CNPG, KEDA, secrets,
+        // observabilité, ArgoCD, metrics-server) — pattern "infra par IaC, apps par GitOps".
+        //
+        // ⚠️ Transition : activer ce flag fait que Pulumi RETIRE les 3 apps du cluster
+        // (changement de provider = replace). Workflow complet :
+        //   1. pulumi config set gitops:enabled true
+        //   2. pulumi config set gitops:repoUrl https://github.com/<user>/<repo>
+        //   3. pulumi up --yes            → rend les YAML + crée l'Application ArgoCD
+        //   4. git add manifests && git commit && git push
+        //   5. ArgoCD synchronise → (re)déploie les apps depuis Git
+        var gitopsEnabled = gitopsCfg.GetBoolean("enabled") ?? false;
+
+        // Provider de rendu : écrit les manifests au lieu de les appliquer au cluster.
+        // Chemin relatif au répertoire d'exécution Pulumi (infra/Ecommerce.Infra)
+        // → ../../gitops/apps = <racine repo>/gitops/apps.
+        var manifestsProvider = gitopsEnabled
+            ? new Pulumi.Kubernetes.Provider("manifests-render", new Pulumi.Kubernetes.ProviderArgs
+              {
+                  RenderYamlToDirectory = gitopsCfg.Get("outputDir") ?? "../../gitops/apps"
+              })
+            : null;
+
+        // Options passées aux 3 ComponentResources applicatives.
+        // Avec le render provider : les ressources enfants (Deployment, Service, HPA,
+        // ConfigMap) héritent du provider via Parent et sont rendues en YAML.
+        // Sans (mode normal) : options vides → provider par défaut → applique au cluster.
+        ComponentResourceOptions AppOpts() =>
+            manifestsProvider is null
+                ? new ComponentResourceOptions()
+                : new ComponentResourceOptions { Providers = { manifestsProvider } };
+
         // ── Services applicatifs ──────────────────────────────────────────────
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
         {
@@ -196,7 +234,7 @@ public class EcommerceStack : Stack
                 CpuPercent    = hpaCfg.GetInt32("orderApiCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("orderApiMemory")
             }
-        });
+        }, AppOpts());
 
         var inventoryApi = new InventoryServiceResources("inventory-service", new InventoryServiceResourcesArgs
         {
@@ -215,7 +253,7 @@ public class EcommerceStack : Stack
             MemoryRequest         = resourcesCfg.Get("inventoryApiMemoryRequest") ?? "128Mi",
             MemoryLimit           = resourcesCfg.Get("inventoryApiMemoryLimit")   ?? "256Mi",
             // Hpa : non passé — le scaling est géré par KEDA (ScaledObject ci-dessus).
-        });
+        }, AppOpts());
 
         var gateway = new GatewayResources("gateway", new GatewayResourcesArgs
         {
@@ -239,7 +277,7 @@ public class EcommerceStack : Stack
                 CpuPercent    = hpaCfg.GetInt32("gatewayCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("gatewayMemory")
             }
-        });
+        }, AppOpts());
 
         // ── Argo CD (GitOps CD) ───────────────────────────────────────────────
         // Déployé dans le namespace "argocd", indépendant de la stack ecommerce.
@@ -257,6 +295,23 @@ public class EcommerceStack : Stack
             RepoServerReplicas     = argocdCfg.GetInt32("repoServerReplicas")     ?? 1,
             ApplicationSetReplicas = argocdCfg.GetInt32("applicationSetReplicas") ?? 1
         });
+
+        // ── Application ArgoCD (GitOps des apps) ──────────────────────────────
+        // Créée uniquement si gitops:enabled = true ET gitops:repoUrl renseigné.
+        // L'Application surveille gitops/apps/ dans le repo Git et synchronise
+        // order-api, inventory-api, gateway (rendus en YAML par le manifestsProvider).
+        // DependsOn argocd : l'opérateur ArgoCD et ses CRDs doivent exister d'abord.
+        var gitopsRepoUrl = gitopsCfg.Get("repoUrl");
+        if (gitopsEnabled && !string.IsNullOrWhiteSpace(gitopsRepoUrl))
+        {
+            _ = new GitopsResources("gitops", new GitopsResourcesArgs
+            {
+                Namespace        = "ecommerce",
+                RepoUrl          = gitopsRepoUrl!,
+                TargetRevision   = gitopsCfg.Get("targetRevision") ?? "main",
+                Path             = gitopsCfg.Get("path") ?? "gitops/apps"
+            }, new ComponentResourceOptions { DependsOn = { argocd } });
+        }
 
         // ── Ingress (prod uniquement) ─────────────────────────────────────────
         if (ingressEnabled)

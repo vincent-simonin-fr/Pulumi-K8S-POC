@@ -30,7 +30,3 @@ appsettings.*.json
 ## Logs
 logs/
 *.log
-
-
-## YAML
-k8s/*
