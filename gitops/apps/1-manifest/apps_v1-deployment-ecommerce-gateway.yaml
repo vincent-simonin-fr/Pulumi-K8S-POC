@@ -13,6 +13,15 @@ spec:
       labels:
         app: gateway
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: gateway
+              topologyKey: kubernetes.io/hostname
+            weight: 100
       containers:
       - envFrom:
         - configMapRef:

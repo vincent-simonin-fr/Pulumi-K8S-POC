@@ -210,6 +210,11 @@ config:
   keda:pollingInterval: "5" # secondes entre chaque lecture de la queue
   keda:cooldownPeriod: "60" # secondes d'inactivité avant que KEDA demande le scale-in au HPA
   keda:scaleDownWindow: "240" # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)
+  # ── RabbitMQ — mode déploiement ───────────────────────────────────────────
+  # Dev (Kind mono-nœud) : Deployment simple 1 réplica. Le mode cluster (quorum
+  # N nœuds via l'opérateur) n'a de sens qu'en prod multi-nœuds — voir Pulumi.prod.yaml.
+  # cluster=false → pas d'opérateur installé (économie de ressources sur Kind).
+  rabbitmq:cluster: "true"
   # ── Argo CD — GitOps Continuous Delivery ────────────────────────────────
 
   # Argo CD surveille un repo Git et réconcilie l'état du cluster.

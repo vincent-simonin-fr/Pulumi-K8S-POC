@@ -13,6 +13,15 @@ spec:
       labels:
         app: inventory-api
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: inventory-api
+              topologyKey: kubernetes.io/hostname
+            weight: 100
       containers:
       - env:
         - name: ASPNETCORE_ENVIRONMENT

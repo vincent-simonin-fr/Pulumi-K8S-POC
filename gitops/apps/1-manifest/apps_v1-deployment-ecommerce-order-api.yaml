@@ -13,6 +13,15 @@ spec:
       labels:
         app: order-api
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: order-api
+              topologyKey: kubernetes.io/hostname
+            weight: 100
       containers:
       - env:
         - name: RabbitMQ__Host

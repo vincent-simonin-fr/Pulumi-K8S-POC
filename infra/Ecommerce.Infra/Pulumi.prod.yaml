@@ -40,7 +40,7 @@ config:
   replicas:orderApi: "2"
   replicas:inventoryApi: "2"
   replicas:gateway: "2"
-  replicas:rabbitmq: "1"   # ⚠️ SPOF — voir note HA RabbitMQ en bas de fichier
+  # replicas:rabbitmq ignoré en mode cluster (piloté par rabbitmq:replicas ci-dessous)
 
   # ── Resources CPU/mémoire (à ajuster selon les nœuds du cluster) ─────────────
   resources:orderApiCpuRequest: "200m"
@@ -106,6 +106,20 @@ config:
   cnpg:storageClass: "gp3"      # ← ADAPTER à votre provider de stockage réseau
   cnpg:storageSize: "10Gi"
 
+  # ── RabbitMQ — cluster quorum HA (RabbitMQ Cluster Operator) ─────────────────
+  # cluster=true installe l'opérateur + déploie un RabbitmqCluster N nœuds avec
+  # quorum queues (répliquées par Raft). Perte de (N-1)/2 nœuds tolérée.
+  # Les credentials ESO (secrets:rabbitmqUser/Password) sont imposés au cluster.
+  # ⚠️ storageClass = stockage RÉSEAU (même contrainte que CNPG en multi-nœuds).
+  rabbitmq:cluster: "true"
+  rabbitmq:replicas: "3"          # impair pour le quorum (3 ou 5)
+  # Opérateur officiel RabbitMQ. Par défaut l'image du manifeste officiel est utilisée
+  # (ghcr.io/rabbitmq/cluster-operator). En prod, épingler une version OFFICIELLE pour
+  # la reproductibilité (le manifeste "latest" peut bouger) :
+  rabbitmq:operatorImage: "ghcr.io/rabbitmq/cluster-operator:2.21.0"
+  rabbitmq:storageClass: "gp3"    # ← ADAPTER au provider de stockage réseau
+  rabbitmq:storageSize: "5Gi"
+
   # ── KEDA — autoscaling inventory-api sur la profondeur de queue RabbitMQ ──────
   keda:version: "2.17.0"
   keda:queueName: "product-added-to-cart"
@@ -137,16 +151,14 @@ config:
   # gitops:repoUrl: "https://github.com/<org>/<repo>.git"
 
   # ╔══════════════════════════════════════════════════════════════════════════╗
-  # ║  HA RESTANTE — composants encore SPOF (chantiers post-déploiement)         ║
+  # ║  HA — état des composants                                                  ║
   # ║                                                                            ║
-  # ║  RabbitMQ (replicas=1) : SPOF critique (bus d'événements). Pour la HA :     ║
-  # ║    déployer le RabbitMQ Cluster Operator (RabbitmqCluster 3 nœuds + quorum  ║
-  # ║    queues). Nécessite du code (RabbitmqResources.cs calqué sur CNPG).       ║
+  # ║  PostgreSQL : ✅ CNPG 3 instances + stockage réseau (failover auto).        ║
+  # ║  RabbitMQ   : ✅ cluster quorum 3 nœuds (rabbitmq:cluster=true ci-dessus).   ║
+  # ║  Apps       : ✅ anti-affinité soft (K8sAffinity.cs) → répartition nœuds.   ║
+  # ║  Argo CD    : ✅ 2 replicas par composant stateless.                        ║
   # ║                                                                            ║
-  # ║  Redis (replicas=1) : SPOF non critique (cache, fallback gracieux). Pour    ║
-  # ║    la HA : Redis Operator (RedisFailover = Sentinel). Optionnel.            ║
-  # ║                                                                            ║
-  # ║  Anti-affinité apps : SOFT (codée dans K8sAffinity.cs), active en prod.     ║
-  # ║    Répartit order/inventory/gateway sur les nœuds. Pour forcer HARD         ║
-  # ║    (jamais 2 pods/nœud), faire évoluer K8sAffinity (clusters ≥ N nœuds).    ║
+  # ║  Redis (replicas=1) : SPOF non critique restant (cache avec fallback        ║
+  # ║    gracieux — un cache miss va en DB, pas de coupure). Pour la HA :         ║
+  # ║    Redis Operator (RedisFailover = Sentinel). Optionnel, non implémenté.    ║
   # ╚══════════════════════════════════════════════════════════════════════════╝

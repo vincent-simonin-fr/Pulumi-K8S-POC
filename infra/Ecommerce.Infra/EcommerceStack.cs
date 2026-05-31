@@ -27,6 +27,7 @@ public class EcommerceStack : Stack
         var argocdCfg        = new Config("argocd");
         var metricsServerCfg = new Config("metricsServer");
         var gitopsCfg        = new Config("gitops");
+        var rabbitmqCfg      = new Config("rabbitmq");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -139,11 +140,42 @@ public class EcommerceStack : Stack
             StorageSize         = cnpgCfg.Get("storageSize")             ?? "1Gi",
         }, cnpgSecretsDep);
 
+        // ── RabbitMQ — Deployment (dev) ou Cluster Operator (prod HA) ─────────
+        // rabbitmq:cluster = true → installe l'opérateur RabbitMQ + déploie un
+        // RabbitmqCluster quorum N nœuds (HA). false → Deployment simple 1 réplica.
+        var rabbitmqCluster = rabbitmqCfg.GetBoolean("cluster") ?? false;
+
+        // L'opérateur n'est installé QUE si le mode cluster est activé (dev = pas
+        // d'opérateur, économie de ressources). MessagingResources DependsOn l'opérateur
+        // en mode cluster pour que la CRD RabbitmqCluster soit enregistrée (cache GVK).
+        ComponentResource? rabbitmqOperator = null;
+        if (rabbitmqCluster)
+        {
+            rabbitmqOperator = new RabbitmqOperatorResources("rabbitmq-operator", new RabbitmqOperatorResourcesArgs
+            {
+                // Vide par défaut → image du manifeste officiel (ghcr.io/rabbitmq/...).
+                // Override seulement pour épingler une version officielle précise.
+                OperatorImage = rabbitmqCfg.Get("operatorImage") ?? "",
+                ManifestUrl   = rabbitmqCfg.Get("operatorManifest")
+                                ?? "https://github.com/rabbitmq/cluster-operator/releases/latest/download/cluster-operator.yml"
+            });
+        }
+
+        // DependsOn : secrets ESO (toujours) + opérateur RabbitMQ (mode cluster).
+        var mqDep = new ComponentResourceOptions { DependsOn = { secretsResources } };
+        if (rabbitmqOperator is not null)
+            mqDep.DependsOn.Add(rabbitmqOperator);
+
         var mqResources = new MessagingResources("messaging", new MessagingResourcesArgs
         {
-            Namespace = namespaceName,
-            Replicas  = replicasCfg.GetInt32("rabbitmq") ?? 1
-        }, secretsDep);
+            Namespace        = namespaceName,
+            UseCluster       = rabbitmqCluster,
+            Replicas         = rabbitmqCfg.GetInt32("replicas")     ?? 3,
+            RabbitMqUser     = secretsCfg.Get("rabbitmqUser")        ?? "guest",
+            RabbitMqPassword = secretsCfg.Get("rabbitmqPassword")    ?? "guest",
+            StorageClass     = rabbitmqCfg.Get("storageClass")       ?? "standard",
+            StorageSize      = rabbitmqCfg.Get("storageSize")        ?? "5Gi"
+        }, mqDep);
 
         var cacheResources = new CacheResources("cache", new CacheResourcesArgs
         {

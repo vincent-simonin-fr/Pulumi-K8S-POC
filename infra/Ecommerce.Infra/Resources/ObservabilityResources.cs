@@ -334,6 +334,20 @@ scrape_configs:
   # Note : le chart CNPG (0.23.x) n'expose pas de service de métriques pour l'opérateur.
   # cnpg-controller-manager-metrics-service n'existe pas dans cnpg-system.
 
+  # ── RabbitMQ — plugin rabbitmq_prometheus natif (port 15692) ─────────────
+  # En mode cluster, chaque nœud expose SES métriques sur 15692. Le Service headless
+  # rabbitmq-metrics (clusterIP: None) résout en DNS vers les 3 IPs de pods.
+  # dns_sd_configs (type SRV/A sur le headless) → Prometheus découvre et scrape les
+  # 3 nœuds individuellement (un job static ne verrait qu'un nœud load-balancé).
+  # En mode Deployment (dev), le headless résout vers l'unique pod → 1 cible.
+  # Inactif si RabbitMQ tourne sans le port 15692 (Deployment simple sans plugin) —
+  # dans ce cas la cible est down, sans impact sur le reste.
+  - job_name: rabbitmq
+    dns_sd_configs:
+      - names: ['rabbitmq-metrics.ecommerce.svc.cluster.local']
+        type: A
+        port: 15692
+
   # ── Argo CD — métriques des composants GitOps ────────────────────────────
   # Le chart active les services *-metrics quand metrics.enabled=true (ArgocdResources.cs).
   # Métriques clés : argocd_app_info, argocd_app_sync_total, argocd_git_request_duration_seconds
@@ -384,7 +398,12 @@ scrape_configs:
                                 // ses métriques de charge directement dans Prometheus.
                                 // Les métriques k6 (k6_http_req_duration_*, k6_vus, ...)
                                 // sont alors corrélables avec les métriques applicatives dans Grafana.
-                                "--web.enable-remote-write-receiver"
+                                "--web.enable-remote-write-receiver",
+                                // Active l'API de reload (POST /-/reload) → recharge les scrape_configs
+                                // sans redémarrer le pod. Sans ce flag, tout changement du ConfigMap
+                                // prometheus-config nécessite un rollout restart manuel (la cause du
+                                // "no data" sur les jobs ajoutés à chaud).
+                                "--web.enable-lifecycle"
                             },
                             Ports        = new ContainerPortArgs { Name = "http", ContainerPortValue = 9090 },
                             VolumeMounts = new VolumeMountArgs { Name = "config", MountPath = "/etc/prometheus" },
@@ -469,7 +488,8 @@ datasources:
                 ["database.json"]   = File.ReadAllText("../../docker/observability/dashboards/database.json"),
                 ["runtime.json"]    = File.ReadAllText("../../docker/observability/dashboards/runtime.json"),
                 ["kubernetes.json"] = File.ReadAllText("../../docker/observability/dashboards/kubernetes.json"),
-                ["cnpg.json"]       = File.ReadAllText("../../docker/observability/dashboards/cnpg.json")
+                ["cnpg.json"]       = File.ReadAllText("../../docker/observability/dashboards/cnpg.json"),
+                ["rabbitmq.json"]   = File.ReadAllText("../../docker/observability/dashboards/rabbitmq.json")
             }
         }, nsDep);
 

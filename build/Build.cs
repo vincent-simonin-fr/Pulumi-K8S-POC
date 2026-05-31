@@ -149,6 +149,15 @@ partial class Build : NukeBuild
         "registry.k8s.io/metrics-server/metrics-server:v0.7.2",
     };
 
+    // Images du mode RabbitMQ cluster (rabbitmq:cluster=true uniquement).
+    // ⚠️ NON préchargées par défaut : le mode cluster est prod (multi-nœuds), pas
+    // dev Kind. L'opérateur officiel (rabbitmqoperator/cluster-operator:latest) est
+    // appliqué via manifeste depuis github.com/rabbitmq/cluster-operator.
+    // Pour précharger en vue d'un test cluster local, ajouter à PreloadImageList :
+    //   "rabbitmqoperator/cluster-operator:latest"
+    //   "rabbitmq:4.3.1-management-alpine"   (déjà préchargée ci-dessus)
+    // Note : "latest" n'est pas reproductible — épingler une version pour un test stable.
+
     Target PreloadImages => _ => _
         .Description("Pull (podman) + load (kind) des images infra/observabilité/KEDA/metrics-server.")
         .Executes(() =>
