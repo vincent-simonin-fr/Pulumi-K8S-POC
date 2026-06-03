@@ -18,6 +18,7 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 | [Dev local & Tests](docs/dev-local.md) | `podman-compose`, tests d'intégration, migrations EF Core, OpenAPI, observabilité |
 | [k9s](docs/k9s.md) | Interface terminal Kubernetes — logs, shell, describe sans Dashboard |
 | [Tests de charge](docs/load-testing.md) | k6 — scénarios baseline/load/stress/spike, intégration Prometheus |
+| [Accès (mots de passe & port-forwards)](docs/access.md) | NodePorts, port-forwards, récupération des credentials (Grafana, ArgoCD, RabbitMQ, PostgreSQL) |
 | [Argo CD / GitOps](docs/argocd.md) | Déploiement GitOps des apps, credential dépôt privé, RBAC, SSO |
 | [Versioning des images](docs/versioning.md) | Tags SemVer + SHA par service, `dotnet nuke BuildImages`, redéploiement ciblé |
 

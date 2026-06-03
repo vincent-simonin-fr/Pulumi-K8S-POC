@@ -66,18 +66,43 @@ public class EcommerceStack : Stack
             KubeletInsecureTls = metricsServerCfg.GetBoolean("kubeletInsecureTls") ?? true
         });
 
-        // ── Observabilité (namespace monitoring — indépendant de ecommerce) ───
+        // ── Observabilité ─────────────────────────────────────────────────────
+        // OTel Collector + Jaeger (tracing) gérés ici. Prometheus + Grafana +
+        // node-exporter + kube-state-metrics : fournis par le chart
+        // kube-prometheus-stack (ci-dessous) via le Prometheus Operator.
         var observability = new ObservabilityResources("observability", new ObservabilityResourcesArgs
         {
-            OtelCollectorVersion = obsCfg.Get("otelVersion")               ?? "0.153.0",
-            JaegerVersion        = obsCfg.Get("jaegerVersion")              ?? "1.76.0",
-            PrometheusVersion    = obsCfg.Get("prometheusVersion")          ?? "v3.11.3",
-            GrafanaVersion       = obsCfg.Get("grafanaVersion")             ?? "13.0.1-security-01",
-            GrafanaNodePort      = grafanaNodePort,
+            OtelCollectorVersion = obsCfg.Get("otelVersion")  ?? "0.153.0",
+            JaegerVersion        = obsCfg.Get("jaegerVersion") ?? "1.76.0",
             JaegerUiNodePort     = jaegerNodePort,
-            IngressEnabled       = ingressEnabled,
-            GrafanaAdminPassword = obsCfg.Get("grafanaAdminPassword")       ?? ""
+            IngressEnabled       = ingressEnabled
         });
+
+        // ── Métriques : kube-prometheus-stack (Operator + Grafana + exporters) ─
+        // DependsOn observability : namespace monitoring + Jaeger (datasource Grafana).
+        var kpStack = new KubePrometheusStackResources("kube-prometheus-stack", new KubePrometheusStackResourcesArgs
+        {
+            Namespace            = "monitoring",
+            Version              = obsCfg.Get("kpStackVersion") ?? "86.1.0",
+            GrafanaNodePort      = grafanaNodePort,
+            IngressEnabled       = ingressEnabled,
+            GrafanaAdminPassword = obsCfg.Get("grafanaAdminPassword") ?? "",
+            JaegerUrl            = "http://jaeger.monitoring.svc.cluster.local:16686"
+        }, new ComponentResourceOptions { DependsOn = { observability } });
+
+        // ServiceMonitors : scrape déclaratif découvert par l'Operator (DependsOn le
+        // chart pour que la CRD ServiceMonitor existe avant le kubectl apply).
+        _ = new ServiceMonitorResources("service-monitors", new ServiceMonitorResourcesArgs
+        {
+            MonitoringNamespace = "monitoring"
+        }, new ComponentResourceOptions { DependsOn = { kpStack } });
+
+        // Dashboards : ConfigMaps labellisés grafana_dashboard=1, chargés par le
+        // sidecar du Grafana du chart.
+        _ = new GrafanaDashboardsResources("grafana-dashboards", new GrafanaDashboardsResourcesArgs
+        {
+            Namespace = "monitoring"
+        }, new ComponentResourceOptions { DependsOn = { kpStack } });
 
         // ── Namespace ─────────────────────────────────────────────────────────
         var ns = new Namespace("ecommerce-ns", new NamespaceArgs

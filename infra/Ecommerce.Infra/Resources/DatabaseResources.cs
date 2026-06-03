@@ -197,13 +197,25 @@ public class DatabaseResources : ComponentResource
             Metadata = new ObjectMetaArgs
             {
                 Namespace = args.Namespace,
-                Name      = $"{clusterName}-metrics"
+                Name      = $"{clusterName}-metrics",
+                // Label cnpg.io/cluster UNIQUEMENT (pas monitoring=ecommerce) : chaque cluster
+                // CNPG a son ServiceMonitor dédié (cnpg-order/cnpg-inventory) qui cible ce label
+                // et applique le relabel 'cluster'. Ne PAS ajouter monitoring=ecommerce ici,
+                // sinon le ServiceMonitor postgres-exporters (même label + port metrics) les
+                // scraperait aussi → double scrape sans le relabel cluster.
+                Labels = new InputMap<string> { ["cnpg.io/cluster"] = clusterName }
             },
             Spec = new ServiceSpecArgs
             {
-                // Sélectionne tous les pods CNPG du cluster (primary + replicas).
-                // Le label cnpg.io/cluster est positionné par l'opérateur CNPG sur chaque pod.
-                Selector = new InputMap<string> { ["cnpg.io/cluster"] = clusterName },
+                // Sélectionne UNIQUEMENT les pods instances Postgres (primary + replicas),
+                // PAS les poolers PgBouncer. Le label cnpg.io/podRole=instance distingue les
+                // deux : les poolers ont cnpg.io/cluster mais n'exposent pas :9187 → sinon
+                // ils apparaissent "down" dans Prometheus (connection refused).
+                Selector = new InputMap<string>
+                {
+                    ["cnpg.io/cluster"]  = clusterName,
+                    ["cnpg.io/podRole"]  = "instance"
+                },
                 Ports    = new ServicePortArgs { Name = "metrics", Port = 9187, TargetPort = 9187 }
             }
         }, opts);
@@ -488,7 +500,13 @@ spec:
 
         _ = new Service($"{appLabel}-svc", new ServiceArgs
         {
-            Metadata = new ObjectMetaArgs { Namespace = args.Namespace, Name = appLabel },
+            // Label monitoring=ecommerce : cible des ServiceMonitor (Prometheus Operator).
+            Metadata = new ObjectMetaArgs
+            {
+                Namespace = args.Namespace,
+                Name      = appLabel,
+                Labels    = new InputMap<string> { ["monitoring"] = "ecommerce" }
+            },
             Spec = new ServiceSpecArgs
             {
                 Selector = new InputMap<string> { ["app"] = appLabel },
