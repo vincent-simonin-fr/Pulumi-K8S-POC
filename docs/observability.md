@@ -13,32 +13,46 @@
 
 ## Architecture
 
+Deux briques distinctes :
+- **Tracing** : OTel Collector + Jaeger, gérés directement par Pulumi (`ObservabilityResources`).
+- **Métriques** : chart Helm **kube-prometheus-stack** (Prometheus Operator + Grafana +
+  node-exporter + kube-state-metrics), gérés par `KubePrometheusStackResources`.
+
 ```
 order-api  ──┐
 inventory  ──┤  OTLP gRPC :4317   ┌──────────────────────────┐
 gateway    ──┘ ─────────────────► │  OpenTelemetry Collector  │
                                   │  namespace: monitoring    │
                                   └──────┬──────────┬─────────┘
-                              traces    │          │  metriques
+                              traces    │          │  metriques :8889
                                         ▼          ▼
-                                     Jaeger   Prometheus ◄── postgres_exporter x2
-                                     :16686     :9090    ◄── kube-state-metrics
-                                        │          │     ◄── node-exporter
-                                        └────┬─────┘
+                                     Jaeger   Prometheus (Operator)
+                                     :16686     ▲   ▲   ▲   ▲
+                                        │       │   │   │   └── ServiceMonitor rabbitmq (x3 nœuds)
+                                        │       │   │   └────── ServiceMonitor cnpg (x2)
+                                        │       │   └────────── ServiceMonitor postgres-exporter (x2)
+                                        │       └────────────── ServiceMonitor otel / argocd
+                                        │       (+ node-exporter, kube-state-metrics : chart)
+                                        └────┬──────────────┘
                                              ▼
-                                          Grafana
-                                        4 dashboards
+                                          Grafana (chart)
+                                        6 dashboards (sidecar)
 ```
 
-| Composant               | Role                                              | Namespace   |
-|-------------------------|---------------------------------------------------|-------------|
-| OTel Collector          | Recoit OTLP, route vers Jaeger + Prometheus       | monitoring  |
-| Jaeger all-in-one       | Stockage et visualisation des traces              | monitoring  |
-| Prometheus              | Scrape 5 jobs (collector, PG x2, KSM, node)       | monitoring  |
-| Grafana                 | 4 dashboards provisionnes automatiquement         | monitoring  |
-| postgres_exporter x2    | Metriques PostgreSQL (order-db + inventory-db)    | ecommerce   |
-| kube-state-metrics      | Etat pods/deployments/HPA en metriques Prometheus | monitoring  |
-| node-exporter           | CPU/RAM/Disque/Reseau du noeud Kind               | monitoring  |
+**Le modèle de scrape** : avec le Prometheus Operator, chaque cible déclare un
+**ServiceMonitor** (CRD) que l'Operator découvre automatiquement — plus de
+`scrape_configs` central à éditer + reload. Voir `ServiceMonitorResources.cs`.
+
+| Composant               | Role                                              | Namespace   | Géré par |
+|-------------------------|---------------------------------------------------|-------------|----------|
+| OTel Collector          | Recoit OTLP, route vers Jaeger + Prometheus       | monitoring  | Pulumi (ObservabilityResources) |
+| Jaeger all-in-one       | Stockage et visualisation des traces              | monitoring  | Pulumi (ObservabilityResources) |
+| Prometheus (Operator)   | Scrape via ServiceMonitors (découverte auto)      | monitoring  | chart kube-prometheus-stack |
+| Grafana                 | 6 dashboards (sidecar) + datasource Jaeger        | monitoring  | chart kube-prometheus-stack |
+| node-exporter           | CPU/RAM/Disque/Reseau des noeuds                  | monitoring  | chart kube-prometheus-stack |
+| kube-state-metrics      | Etat pods/deployments/HPA en metriques Prometheus | monitoring  | chart kube-prometheus-stack |
+| postgres_exporter x2    | Metriques PostgreSQL (order-db + inventory-db)    | ecommerce   | Pulumi (DatabaseResources) |
+| ServiceMonitors (6)     | Déclarent les cibles à scraper pour l'Operator    | monitoring  | Pulumi (ServiceMonitorResources) |
 
 ### Signaux exportes par les APIs
 
@@ -56,21 +70,38 @@ gateway    ──┘ ─────────────────► │ 
 
 | UI           | URL                          | Acces     |
 |--------------|------------------------------|-----------|
-| **Grafana**  | http://localhost:30030       | Sans login (auth anonyme activee en dev) |
+| **Grafana**  | http://localhost:30030       | admin / mot de passe généré (voir ci-dessous) |
 | **Jaeger**   | http://localhost:30686       | Sans login |
 | Prometheus   | `kubectl port-forward` uniquement | — |
 
+Mot de passe Grafana (généré par le chart) — depuis **Git Bash** :
+
 ```bash
-kubectl port-forward -n monitoring svc/prometheus 9090:9090
-# http://localhost:9090
+kubectl get secret kube-prometheus-stack-grafana -n monitoring \
+  -o jsonpath="{.data.admin-password}" | base64 -d
 ```
+
+Prometheus (UI / targets) :
+
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+# http://localhost:9090  ·  http://localhost:9090/targets
+```
+
+> En prod : Grafana passe en ClusterIP derrière l'Ingress (`grafana.{domain}`),
+> mot de passe via `pulumi config set --secret observability:grafanaAdminPassword`.
+> Voir [access.md](access.md) pour tous les accès/credentials.
 
 ---
 
 ## Dashboards Grafana
 
-Les 4 dashboards sont provisionnes automatiquement au demarrage de Grafana.
+Les 6 dashboards sont chargés automatiquement par le **sidecar** du Grafana du chart
+(tout ConfigMap labellisé `grafana_dashboard: "1"` — voir `GrafanaDashboardsResources.cs`).
 Acces : http://localhost:30030 → **Dashboards** → **Browse**.
+
+Les 6 : Services (RED), PostgreSQL, .NET Runtime, Kubernetes & Infra, CNPG, RabbitMQ.
+Tous référencent la datasource Prometheus par `uid: prometheus` (fixé dans le chart).
 
 ### 1. Services — RED Metrics
 
@@ -158,6 +189,18 @@ kube_horizontalpodautoscaler_status_current_replicas{namespace="ecommerce"}
 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
 ```
 
+### 5. CNPG (PostgreSQL HA)
+
+Panels : état des clusters, réplication streaming, connexions, cache, transactions par
+cluster (label `cluster=order-db|inventory-db` posé par le ServiceMonitor cnpg).
+Métriques `cnpg_*` exposées par chaque instance Postgres (port 9187).
+
+### 6. RabbitMQ (Cluster & Messaging)
+
+Panels : nœuds up, messages ready/unacked, débit publish/deliver/ack, connexions &
+channels par nœud, mémoire/disque par nœud. Métriques `rabbitmq_*` du plugin natif
+(port 15692), scrapées sur les 3 nœuds via le ServiceMonitor rabbitmq.
+
 ---
 
 ## Jaeger — traces distribuees
@@ -188,24 +231,28 @@ curl http://localhost:30080/inventory
 ## Verification du pipeline
 
 ```bash
-# 1. Pods monitoring + exporters
+# 1. Pods monitoring (chart kube-prometheus-stack + OTel/Jaeger)
 kubectl get pods -n monitoring
-kubectl get pods -n ecommerce | findstr exporter
-# ATTENDU : otel-collector, jaeger, prometheus, grafana, ksm, node-exporter → Running
-#           postgres-exporter-order, postgres-exporter-inventory → Running
+# ATTENDU : kube-prometheus-stack-operator, prometheus-kube-prometheus-stack-prometheus-0,
+#           kube-prometheus-stack-grafana, ...-kube-state-metrics, ...-node-exporter,
+#           otel-collector, jaeger → Running
 
-# 2. Prometheus targets (tous UP)
-kubectl port-forward -n monitoring svc/prometheus 9090:9090
-# http://localhost:9090/targets → 5 jobs : otel-collector, postgres-order,
-#   postgres-inventory, kube-state-metrics, node-exporter
+# 2. ServiceMonitors déclarés
+kubectl get servicemonitors -n monitoring
+# ATTENDU : otel-collector, postgres-exporters, cnpg-order, cnpg-inventory,
+#           rabbitmq, argocd (+ ceux du chart)
 
-# 3. Grafana dashboards
-# http://localhost:30030 → Dashboards → Browse → 4 dashboards dans "ecommerce"
+# 3. Prometheus targets (toutes UP)
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+# http://localhost:9090/targets → toutes les cibles des ServiceMonitors ci-dessus
 
-# 4. Traces Jaeger
+# 4. Grafana dashboards
+# http://localhost:30030 → Dashboards → Browse → 6 dashboards
+
+# 5. Traces Jaeger
 # http://localhost:30686 → Service: gateway → Find Traces
 
-# 5. Logs du collecteur (si traces manquantes)
+# 6. Logs du collecteur (si traces manquantes)
 kubectl logs -n monitoring deploy/otel-collector -f
 ```
 

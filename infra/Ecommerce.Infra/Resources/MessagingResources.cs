@@ -256,7 +256,9 @@ spec:
             Metadata = new ObjectMetaArgs
             {
                 Namespace = args.Namespace,
-                Name      = "rabbitmq-metrics"
+                Name      = "rabbitmq-metrics",
+                // Label monitoring=ecommerce : cible du ServiceMonitor (Prometheus Operator).
+                Labels    = new InputMap<string> { ["monitoring"] = "ecommerce" }
             },
             Spec = new ServiceSpecArgs
             {

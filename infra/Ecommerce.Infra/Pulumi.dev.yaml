@@ -76,15 +76,16 @@ config:
 
   # Ingress — désactivé en dev (NodePorts utilisés directement)
   ingress:enabled: "false"
-  # Observabilite — OTel Collector + Jaeger + Prometheus + Grafana
-
+  # Observabilite :
+  #   - OTel Collector + Jaeger : gérés par ObservabilityResources
+  #   - Prometheus + Grafana + node-exporter + kube-state-metrics : chart
+  #     kube-prometheus-stack (Operator + ServiceMonitors). Voir docs/observability.md.
   # NodePorts exposes sur l'hote via Kind extraPortMappings (kind-config.yaml).
   observability:grafanaNodePort: "30030"
   observability:jaegerNodePort: "30686"
   observability:otelVersion: "0.153.0"
   observability:jaegerVersion: "1.76.0"
-  observability:prometheusVersion: "v3.11.3"
-  observability:grafanaVersion: "13.0.1-security-01"
+  observability:kpStackVersion: "86.1.0"   # version du chart kube-prometheus-stack
   # ── Mode presale (flash sale, promo, événement) ─────────────────────────
 
   # Quand activé, les HPA sont forcés au minReplicas presale AVANT le pic.
