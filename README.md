@@ -85,6 +85,19 @@ dotnet nuke Launch
 > L'ancien script batch `scripts\k8s_complete_launch.cmd` est conservé pour mémoire
 > (équivalent autonome, voir [docs/versioning.md](docs/versioning.md)).
 
+### Secrets en dev (mode statique par défaut)
+
+En dev, tout tourne sur des **secrets statiques** définis dans `Pulumi.dev.yaml`
+(mots de passe par défaut) — **rien à configurer**, c'est le mode simple.
+
+HashiCorp **Vault** (serveur + VSO) est déployé, mais order-api / inventory-api ne
+passent aux **creds PostgreSQL dynamiques** qu'une fois Vault **bootstrappé**
+(init/unseal + `pulumi config set --secret vault:rootToken …`). Tant que ce n'est pas
+fait, les apps **restent sur les secrets statiques** → aucun blocage au démarrage.
+
+- Activer le dynamique (optionnel) : voir [docs/vault.md](docs/vault.md).
+- Alléger le dev (pas de Vault du tout) : `vault:enabled=false` dans `Pulumi.dev.yaml`.
+
 ---
 
 ## Démarrage rapide — étapes manuelles

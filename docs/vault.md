@@ -71,6 +71,34 @@ kubectl get secret order-db-dynamic -n ecommerce \
 Le préfixe `v-kubernet-` confirme que VSO s'est authentifié via le ServiceAccount
 (auth Kubernetes), pas avec un token statique.
 
+## Creds dynamiques pour les apps (Phase 3e)
+
+C'est **automatique** : dès que Vault est bootstrappé (rootToken posé → pipeline VSO
+actif), **order-api** et **inventory-api** consomment des creds PostgreSQL **dynamiques**
+(Secrets `order-db-dynamic` / `inventory-db-dynamic`, templés par VSO). Aucun flag —
+c'est la méthode. Tant que Vault n'est pas bootstrappé, les apps utilisent les secrets
+statiques (pas de blocage au 1er déploiement).
+
+Les deux services suivent le **même schéma** : rôle dynamique dédié (`order-app` /
+`inventory-app`), connexion directe `-rw`, et **restart rolling par VSO** à chaque
+rotation (l'username change à chaque bail → relecture du Secret au boot).
+
+Effet :
+- order-api lit `ConnectionStrings__OrderDb` depuis le Secret **`order-db-dynamic`**
+  (VSO le **template** : `Host=order-db-rw;…;Username={{dyn}};Password={{dyn}}`).
+- À chaque rotation du bail, VSO **redémarre** order-api (`rolloutRestartTargets`) → le
+  pod relit le Secret. C'est nécessaire car l'**username change à chaque bail** (on ne
+  peut pas juste rafraîchir le password côté Npgsql) → **aucun changement de code .NET**.
+
+⚠️ Points importants :
+- **Opt-in** : quand `true`, order-api ne démarre **qu'après** le bootstrap Vault (le
+  Secret dynamique doit exister). En dev, faire le bootstrap avant, ou laisser `false`.
+- **Connexion directe à `order-db-rw`** (pas le Pooler PgBouncer) : plus fiable avec des
+  users qui tournent (pas de cache d'auth PgBouncer). Pool Npgsql conservé (15/pod).
+- **Migrations EF Core** : le rôle dynamique est `IN ROLE app` ; la révocation Vault fait
+  `REASSIGN OWNED … TO app` avant `DROP ROLE` → les objets créés par un user éphémère
+  sont transférés à `app`, donc la révocation n'échoue jamais.
+
 ## Accès UI / CLI
 
 ```bash

@@ -23,6 +23,7 @@
 | `htpasswd` disponible | Apache utils — `sudo apt install apache2-utils` ou `brew install httpd` |
 | Domaine `wizzz.com` | Accès à la gestion DNS du registrar |
 | Container registry | ghcr.io, Docker Hub, ECR, GCR... avec les images buildées |
+| Clé KMS cloud | AWS KMS / GCP KMS / Azure Key Vault — pour l'auto-unseal de Vault (voir section Vault) |
 
 > **Port 80 accessible depuis Internet** : requis pour la validation HTTP-01 de Let's Encrypt.
 > Si votre cluster est derrière un pare-feu, ouvrez le port 80 sur le LoadBalancer nginx-ingress.
@@ -130,6 +131,52 @@ que les pods soient Ready avant de continuer).
 3. `ClusterIssuer` letsencrypt-prod — après cert-manager
 4. Infra applicative (PostgreSQL, RabbitMQ, APIs)
 5. Ingress resources (gateway, grafana, jaeger) — après ClusterIssuer + nginx
+
+---
+
+## Vault — secrets dynamiques (PostgreSQL)
+
+En prod, les credentials PostgreSQL des apps sont **dynamiques** : Vault (HA Raft +
+auto-unseal KMS) génère un utilisateur éphémère par bail, VSO le livre dans un Secret
+K8s rotaté, et order-api / inventory-api sont redémarrés en rolling à la rotation.
+Détails et architecture : [docs/vault.md](vault.md).
+
+### Pré-requis
+- Une **clé KMS cloud** pour l'auto-unseal — stanza dans `Pulumi.prod.yaml` :
+  ```yaml
+  vault:sealConfig: 'seal "awskms" { region = "eu-west-1" kms_key_id = "arn:aws:kms:..." }'
+  ```
+- Accès du pod Vault au KMS via **identité de charge** (IRSA / Workload Identity).
+
+### Bootstrap (une seule fois dans la vie du cluster Vault)
+
+```bash
+# 1. Le serveur Vault HA est déployé par pulumi up ; il s'auto-descelle via KMS.
+kubectl exec -n vault vault-0 -- vault status        # Sealed: false
+
+# 2. Initialiser (recovery keys + root token initial → à stocker dans un coffre).
+kubectl exec -n vault vault-0 -- vault operator init \
+  -recovery-shares=5 -recovery-threshold=3 -format=json > vault-init-prod.json
+
+# 3. Fournir le token → active la config Vault, puis redéployer.
+pulumi config set --secret vault:rootToken "<root_token>"
+pulumi up --stack prod        # configure Vault (DB engine, rôles, auth k8s) + VSO
+
+# 4. Durcir : révoquer le root token de bootstrap une fois la config appliquée.
+kubectl exec -n vault vault-0 -- vault token revoke <root_token>
+```
+
+Une fois bootstrappé, order-api / inventory-api basculent **automatiquement** sur les
+creds dynamiques (Secrets `order-db-dynamic` / `inventory-db-dynamic`).
+
+> **Note** : la config Vault par **Job in-cluster** (Option A) est l'implémentation
+> actuelle. La cible prod est la config **déclarative** via le provider `pulumi-vault`
+> (Option B) — proposition OpenSpec `vault-config-pulumi-provider`.
+
+### Coexistence avec les mots de passe statiques
+Les `secrets:*DbPassword` (section précédente) restent nécessaires : ils initialisent
+l'utilisateur **`app`** (propriétaire CNPG) et le **postgres-exporter**. Les creds
+**dynamiques** ne servent qu'aux connexions **runtime** des apps (rôles membres de `app`).
 
 ---
 
