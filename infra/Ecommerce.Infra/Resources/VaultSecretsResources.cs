@@ -5,7 +5,7 @@ namespace Ecommerce.Infra.Resources;
 
 public class VaultSecretsResourcesArgs
 {
-    /// <summary>Namespace applicatif où vivent les CRDs VSO + le Secret rotaté.</summary>
+    /// <summary>Namespace applicatif où vivent les CRDs VSO + les Secrets rotatés.</summary>
     public string Namespace { get; set; } = "ecommerce";
 }
 
@@ -34,6 +34,18 @@ public class VaultSecretsResources : ComponentResource
         : base("ecommerce:infra:VaultSecretsResources", name, opts)
     {
         var ns = args.Namespace;
+
+        // Redémarrage rolling à la rotation : l'username dynamique change à chaque bail
+        // → le pod doit relire le Secret au boot (pas juste rafraîchir le password Npgsql).
+        const string rolloutRestart = @"
+  rolloutRestartTargets:
+    - kind: Deployment
+      name: order-api";
+
+        const string rolloutRestartInv = @"
+  rolloutRestartTargets:
+    - kind: Deployment
+      name: inventory-api";
 
         var yaml = $@"
 apiVersion: v1
@@ -75,6 +87,42 @@ spec:
   destination:
     create: true
     name: order-db-dynamic
+    transformation:
+      excludeRaw: true
+      templates:
+        ConnectionStrings__OrderDb:
+          text: 'Host=order-db-rw;Port=5432;Database=order_db;Username={{{{ .Secrets.username }}}};Password={{{{ .Secrets.password }}}};Maximum Pool Size=15;Minimum Pool Size=0'{rolloutRestart}
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth-inventory
+  namespace: {ns}
+spec:
+  vaultConnectionRef: vault-connection
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: inventory-app
+    serviceAccount: vault-auth
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultDynamicSecret
+metadata:
+  name: inventory-db-dynamic
+  namespace: {ns}
+spec:
+  vaultAuthRef: vault-auth-inventory
+  mount: database
+  path: creds/inventory-app
+  destination:
+    create: true
+    name: inventory-db-dynamic
+    transformation:
+      excludeRaw: true
+      templates:
+        ConnectionStrings__InventoryDb:
+          text: 'Host=inventory-db-rw;Port=5432;Database=inventory_db;Username={{{{ .Secrets.username }}}};Password={{{{ .Secrets.password }}}};Maximum Pool Size=15;Minimum Pool Size=0'{rolloutRestartInv}
 ";
 
         _ = new Command("vault-secrets-apply", new CommandArgs

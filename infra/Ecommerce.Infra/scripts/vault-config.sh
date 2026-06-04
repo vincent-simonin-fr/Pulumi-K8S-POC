@@ -26,7 +26,7 @@ echo ">> [3/6] rôle dynamique order-app (user éphémère MEMBRE de 'app', TTL 
 vault write database/roles/order-app \
   db_name=order-db \
   creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE app;" \
-  revocation_statements="DROP ROLE IF EXISTS \"{{name}}\";" \
+  revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO app; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
   default_ttl=1h \
   max_ttl=24h
 
@@ -46,6 +46,34 @@ vault write auth/kubernetes/role/order-app \
   bound_service_account_names=vault-auth \
   bound_service_account_namespaces=ecommerce \
   policies=order-app-policy \
+  ttl=1h
+
+echo ">> [inventory 1/3] connexion inventory-db"
+vault write database/config/inventory-db \
+  plugin_name=postgresql-database-plugin \
+  allowed_roles=inventory-app \
+  connection_url='postgresql://{{username}}:{{password}}@inventory-db-rw.ecommerce.svc.cluster.local:5432/inventory_db?sslmode=disable' \
+  username=postgres \
+  password=ignored-by-trust
+
+echo ">> [inventory 2/3] role dynamique inventory-app"
+vault write database/roles/inventory-app \
+  db_name=inventory-db \
+  creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE app;" \
+  revocation_statements="REASSIGN OWNED BY \"{{name}}\" TO app; DROP OWNED BY \"{{name}}\"; DROP ROLE IF EXISTS \"{{name}}\";" \
+  default_ttl=1h \
+  max_ttl=24h
+
+echo ">> [inventory 3/3] policy + role k8s inventory-app (SA ecommerce/vault-auth)"
+vault policy write inventory-app-policy - <<'EOF'
+path "database/creds/inventory-app" {
+  capabilities = ["read"]
+}
+EOF
+vault write auth/kubernetes/role/inventory-app \
+  bound_service_account_names=vault-auth \
+  bound_service_account_namespaces=ecommerce \
+  policies=inventory-app-policy \
   ttl=1h
 
 echo ">> Config Vault terminee."

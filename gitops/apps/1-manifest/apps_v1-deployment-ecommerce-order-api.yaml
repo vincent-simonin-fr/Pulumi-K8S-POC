@@ -32,7 +32,7 @@ spec:
         - configMapRef:
             name: order-api-config
         - secretRef:
-            name: order-db-credentials
+            name: order-db-dynamic
         - secretRef:
             name: rabbitmq-credentials
         image: localhost/ecommerce/order-api:1.0.0-30e7e62

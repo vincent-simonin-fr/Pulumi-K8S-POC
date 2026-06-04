@@ -18,6 +18,13 @@ public class ServiceResourcesArgs
     public Input<string> OtelEndpoint { get; set; } = "http://localhost:4317";
     public int Replicas { get; set; } = 1;
 
+    /// <summary>
+    /// Nom du Secret K8s fournissant ConnectionStrings__OrderDb.
+    /// Défaut : secret statique (order-db-credentials). Quand vault:orderDynamicCreds=true :
+    /// "order-db-dynamic" (peuplé + rotaté par VSO depuis les creds dynamiques Vault).
+    /// </summary>
+    public Input<string> DbCredentialsSecretName { get; set; } = SecretsResources.OrderDbSecretName;
+
     // Requests/limits — obligatoires pour que l'HPA puisse lire les métriques
     public string CpuRequest { get; set; } = "100m";
     public string CpuLimit { get; set; } = "500m";
@@ -115,8 +122,8 @@ public class OrderServiceResources : ComponentResource
                             EnvFrom = new List<EnvFromSourceArgs>
                             {
                                 new() { ConfigMapRef = new ConfigMapEnvSourceArgs { Name = "order-api-config" } },
-                                // ✅ ConnectionStrings__OrderDb injecté depuis le secret ESO
-                                new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.OrderDbSecretName } },
+                                // ✅ ConnectionStrings__OrderDb : secret statique OU dynamique (Vault/VSO)
+                                new() { SecretRef = new SecretEnvSourceArgs { Name = args.DbCredentialsSecretName } },
                                 // ✅ RabbitMQ__Username + RabbitMQ__Password injectés depuis le secret ESO
                                 new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.RabbitMqSecretName } }
                             },
