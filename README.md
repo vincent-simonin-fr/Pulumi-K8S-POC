@@ -22,6 +22,7 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 | [Argo CD / GitOps](docs/argocd.md) | Déploiement GitOps des apps, credential dépôt privé, RBAC, SSO |
 | [Versioning des images](docs/versioning.md) | Tags SemVer + SHA par service, `dotnet nuke BuildImages`, redéploiement ciblé |
 | [Test HA multi-nœuds](docs/ha-testing.md) | Kind multi-nœuds, anti-affinité, failover CNPG/RabbitMQ, drain de nœud |
+| [Vault — secrets dynamiques](docs/vault.md) | HashiCorp Vault + VSO, creds PostgreSQL dynamiques, bootstrap init/unseal, re-init |
 
 ---
 
