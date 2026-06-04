@@ -346,11 +346,15 @@ spec:
       # exporters). 400 était surdimensionné (~2 Go RAM réservée pour rien).
       max_connections: ""200""
     pg_hba:
-      # Permet à PgBouncer (depuis le CIDR pod Kind 10.244.0.0/24) de se connecter
-      # en tant que 'postgres' sans mot de passe pour exécuter l'authQuery.
-      # Nécessaire car CNPG efface périodiquement le mot de passe du superuser 'postgres'.
+      # Permet à PgBouncer de se connecter en tant que 'postgres' sans mot de passe
+      # pour exécuter l'authQuery. Nécessaire car CNPG efface périodiquement le mot
+      # de passe du superuser 'postgres'.
+      # CIDR = pod subnet Kind = 10.244.0.0/16 (kindnet) : en MULTI-NŒUDS chaque nœud
+      # reçoit un /24 distinct (10.244.0/24, .1/24, .2/24, .3/24…), donc le /16 est
+      # obligatoire — un /24 ne couvrirait que les pods du control-plane et casserait
+      # l'auth des poolers/instances schedulés sur les workers.
       # En prod : remplacer trust par scram-sha-256 et fournir un superuserSecret stable.
-      - ""host all postgres 10.244.0.0/24 trust""
+      - ""host all postgres 10.244.0.0/16 trust""
   superuserSecret:
     name: {superuserSecretName}
   bootstrap:
