@@ -297,3 +297,7 @@ config:
   vault:storageClass: "standard"
   vault:storageSize: "1Gi"
   vault:vsoVersion: "1.4.0"   # Vault Secrets Operator (livraison Vault → Secret K8s)
+  # Bootstrap : après init/unseal, fournir le root token pour activer le Job de config :
+  #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
+  # Sans cette clé, le serveur + VSO sont déployés mais Vault n'est PAS configuré.
+  # Cf. docs/vault.md.

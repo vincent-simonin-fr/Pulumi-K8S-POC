@@ -71,6 +71,10 @@ public class EcommerceStack : Stack
         // Déployé scellé (SkipAwait). Init/unseal = Phase 2 ; VSO + moteur DB
         // dynamique = Phase 3. Gardé par vault:enabled pour pouvoir le désactiver.
         // Dev : standalone + storage fichier. Prod : HA Raft + auto-unseal KMS.
+        // Capturés ici pour brancher les CRDs VSO APRÈS la création du namespace ecommerce.
+        VaultSecretsOperatorResources? vso = null;
+        VaultConfigResources? vaultConfig = null;
+
         if (vaultCfg.GetBoolean("enabled") ?? false)
         {
             var vault = new VaultResources("vault", new VaultResourcesArgs
@@ -85,10 +89,22 @@ public class EcommerceStack : Stack
 
             // Vault Secrets Operator (livraison Vault → Secret K8s). DependsOn le
             // serveur Vault (le chart s'installe en parallèle, mais on garde l'ordre).
-            _ = new VaultSecretsOperatorResources("vault-secrets-operator", new VaultSecretsOperatorResourcesArgs
+            vso = new VaultSecretsOperatorResources("vault-secrets-operator", new VaultSecretsOperatorResourcesArgs
             {
                 Version = vaultCfg.Get("vsoVersion") ?? "1.4.0"
             }, new ComponentResourceOptions { DependsOn = { vault } });
+
+            // Config Vault (Option A : Job in-cluster). Créée UNIQUEMENT si vault:rootToken
+            // est renseigné → bootstrap : up (serveur) → init/unseal → config set --secret
+            // vault:rootToken → up (ce Job configure Vault). Cf. docs/vault.md.
+            if (!string.IsNullOrEmpty(vaultCfg.Get("rootToken")))
+            {
+                vaultConfig = new VaultConfigResources("vault-config", new VaultConfigResourcesArgs
+                {
+                    RootToken     = vaultCfg.GetSecret("rootToken") ?? (Input<string>)"",
+                    VaultImageTag = "1.21.2"
+                }, new ComponentResourceOptions { DependsOn = { vault } });
+            }
         }
 
         // ── Observabilité ─────────────────────────────────────────────────────
@@ -136,6 +152,18 @@ public class EcommerceStack : Stack
         });
 
         var namespaceName = ns.Metadata.Apply(m => m.Name);
+
+        // ── Livraison VSO (CRDs) ──────────────────────────────────────────────
+        // SA vault-auth + VaultConnection/VaultAuth/VaultDynamicSecret dans ecommerce
+        // → Secret K8s 'order-db-dynamic' rotaté. Nécessite VSO + Vault configuré +
+        // le namespace ecommerce. Créé seulement si la config Vault est active.
+        if (vso != null && vaultConfig != null)
+        {
+            _ = new VaultSecretsResources("vault-secrets", new VaultSecretsResourcesArgs
+            {
+                Namespace = "ecommerce"
+            }, new ComponentResourceOptions { DependsOn = { vso, vaultConfig, ns } });
+        }
 
         // ── Secrets (ESO + ClusterSecretStore + ExternalSecrets) ─────────────
         //  Doit être créé AVANT les pods qui consomment les secrets.
