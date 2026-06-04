@@ -60,6 +60,10 @@ partial class Build
 
     Target BuildImages => _ => _
         .Description("Build + tag + load des 3 apps (SemVer + SHA par service) + pulumi config set.")
+        // Ordre dans Launch : le cluster doit exister avant 'kind load' (sinon
+        // "no nodes found"). .After() = contrainte d'ordre SOUPLE (ne déclenche pas
+        // ces cibles ; n'impose l'ordre que si elles sont déjà dans le plan).
+        .After(RecreateCluster, PreloadImages)
         .Executes(() =>
         {
             Assert.FileExists(VersionFile, $"Fichier VERSION introuvable : {VersionFile}");

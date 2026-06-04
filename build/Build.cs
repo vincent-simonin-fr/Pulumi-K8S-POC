@@ -35,18 +35,43 @@ partial class Build : NukeBuild
     public static int Main() => Execute<Build>(x => x.Launch);
 
     // ── Constantes projet ─────────────────────────────────────────────────────
-    const string ClusterName = "ecommerce";
     const string Namespace   = "ecommerce";
+
+    /// <summary>
+    /// Nom du cluster Kind ciblé. Défaut : ecommerce (cluster dev).
+    /// Pour un test HA parallèle SANS détruire le cluster dev :
+    ///   --cluster-name ecommerce-ha   (combiné à --kind-config kind-config-multinode.yaml)
+    /// </summary>
+    [Parameter("Nom du cluster Kind (défaut : ecommerce ; HA parallèle : ecommerce-ha).")]
+    readonly string ClusterName = "ecommerce";
 
     // Répertoire d'exécution Pulumi (relatif à la racine du repo).
     AbsolutePath PulumiDir   => RootDirectory / "infra" / "Ecommerce.Infra";
     AbsolutePath VersionFile => RootDirectory / "VERSION";
-    AbsolutePath KindConfig  => RootDirectory / "kind-config.yaml";
+
+    /// <summary>
+    /// Fichier de config Kind. Défaut : kind-config.yaml (mono-nœud dev).
+    /// Pour tester la HA : --kind-config kind-config-multinode.yaml
+    /// </summary>
+    // Name explicite : sans lui, Nuke exposerait --kind-config-file (kebab de
+    // KindConfigFile). On force --kind-config pour coller à la doc / aux habitudes.
+    [Parameter("Fichier de config Kind (défaut : kind-config.yaml ; HA : kind-config-multinode.yaml).", Name = "kind-config")]
+    readonly string KindConfigFile = "kind-config.yaml";
+
+    AbsolutePath KindConfig  => RootDirectory / KindConfigFile;
 
     // ── Helpers d'exécution ───────────────────────────────────────────────────
     // Toutes les commandes kind reçoivent KIND_EXPERIMENTAL_PROVIDER=podman.
     static readonly IReadOnlyDictionary<string, string> KindEnv =
         new Dictionary<string, string>(EnvironmentInfo.Variables) { ["KIND_EXPERIMENTAL_PROVIDER"] = "podman" };
+
+    // Les outils externes (kind, podman, kubectl, pulumi) écrivent leur progression
+    // sur stderr → Nuke la taguerait [ERR] par défaut (fausses alertes rouges :
+    // "Creating cluster", "Copying blob", "loading..."). On route les DEUX flux
+    // (Std + Err) en Information : la sortie reste visible mais neutre. Les vrais
+    // échecs restent détectés par le code de sortie (AssertZeroExitCode), jamais
+    // par le niveau de log.
+    static void ToolLogger(OutputType type, string line) => Serilog.Log.Information(line);
 
     // Exécute une commande externe et échoue le build si exit code != 0.
     static void Run(string tool, string args, AbsolutePath? workingDir = null,
@@ -54,7 +79,8 @@ partial class Build : NukeBuild
     {
         var process = StartProcess(tool, args,
             workingDirectory: workingDir,
-            environmentVariables: env);
+            environmentVariables: env,
+            logger: ToolLogger);
         process.AssertZeroExitCode();
     }
 
@@ -115,7 +141,8 @@ partial class Build : NukeBuild
         {
             Assert.FileExists(KindConfig, $"kind-config.yaml introuvable : {KindConfig}");
             // kind delete ne doit pas faire échouer si le cluster n'existe pas.
-            StartProcess("kind", $"delete cluster --name {ClusterName}", environmentVariables: KindEnv)
+            StartProcess("kind", $"delete cluster --name {ClusterName}",
+                    environmentVariables: KindEnv, logger: ToolLogger)
                 .WaitForExit();
             Kind($"create cluster --name {ClusterName} --config \"{KindConfig}\"");
             Run("kubectl", $"config use-context kind-{ClusterName}");
@@ -160,6 +187,8 @@ partial class Build : NukeBuild
 
     Target PreloadImages => _ => _
         .Description("Pull (podman) + load (kind) des images infra/observabilité/KEDA/metrics-server.")
+        // 'kind load' exige que le cluster existe → toujours après RecreateCluster.
+        .After(RecreateCluster)
         .Executes(() =>
         {
             foreach (var image in PreloadImageList)
