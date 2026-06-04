@@ -1,0 +1,4 @@
+# Les scripts shell DOIVENT garder des fins de ligne LF : exécutés dans des
+# conteneurs Linux (Vault config Job, etc.), un CRLF casse /bin/sh
+# ("set: illegal option -" sur 'set -e\r').
+*.sh text eol=lf

@@ -78,7 +78,9 @@ public class VaultConfigResources : ComponentResource
         }, o);
 
         // 3. ConfigMap : le script de config (source de vérité = fichier versionné).
-        var scriptText = File.ReadAllText("scripts/vault-config.sh");
+        // Normaliser en LF : sur Windows, git checkout peut écrire le script en CRLF,
+        // ce qui casse /bin/sh dans le conteneur ("set: illegal option -" sur 'set -e\r').
+        var scriptText = File.ReadAllText("scripts/vault-config.sh").Replace("\r\n", "\n").Replace("\r", "\n");
         var scriptCm = new ConfigMap("vault-config-script", new ConfigMapArgs
         {
             Metadata = new ObjectMetaArgs { Name = "vault-config-script", Namespace = Ns },

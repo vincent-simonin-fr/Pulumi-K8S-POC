@@ -297,13 +297,10 @@ config:
   vault:storageClass: "standard"
   vault:storageSize: "1Gi"
   vault:vsoVersion: "1.4.0" # Vault Secrets Operator (livraison Vault → Secret K8s)
-  # Bootstrap : après init/unseal, fournir le root token pour activer le Job de config :
+  # Bootstrap Vault : APRÈS init/unseal, poser le root token pour activer le Job de config :
+
   #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
-  # Sans cette clé, le serveur + VSO sont déployés mais Vault n'est PAS configuré.
-  # Cf. docs/vault.md.
-  # Phase 3e : une fois Vault bootstrappé (rootToken posé ci-dessous), order-api ET
-  # inventory-api consomment AUTOMATIQUEMENT des creds PostgreSQL dynamiques (Secrets
-  # order-db-dynamic / inventory-db-dynamic, rotatés par VSO). Aucun flag : c'est la
-  # méthode. Sans rootToken, les apps restent sur les secrets statiques.
-  vault:rootToken:
-    secure: v1:PcxdE0GBqDH5gOgF:82upEXyu018sZUny2VL/NjpZsXuObtE0Yg48Bywt0xM283I/0ojWhtP1xfk=
+
+  # ⚠️ NE PAS committer : le rootToken (comme vault-init.json) est lié à UNE instance
+
+  #    Vault → caduc à chaque reset de cluster. Le poser localement après le bootstrap.
