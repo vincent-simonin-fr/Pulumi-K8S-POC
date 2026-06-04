@@ -28,6 +28,7 @@ public class EcommerceStack : Stack
         var metricsServerCfg = new Config("metricsServer");
         var gitopsCfg        = new Config("gitops");
         var rabbitmqCfg      = new Config("rabbitmq");
+        var vaultCfg         = new Config("vault");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -65,6 +66,30 @@ public class EcommerceStack : Stack
             Version            = metricsServerCfg.Get("version") ?? "3.12.2",
             KubeletInsecureTls = metricsServerCfg.GetBoolean("kubeletInsecureTls") ?? true
         });
+
+        // ── Vault (coffre de secrets) — Phase 1 : serveur Helm ───────────────
+        // Déployé scellé (SkipAwait). Init/unseal = Phase 2 ; VSO + moteur DB
+        // dynamique = Phase 3. Gardé par vault:enabled pour pouvoir le désactiver.
+        // Dev : standalone + storage fichier. Prod : HA Raft + auto-unseal KMS.
+        if (vaultCfg.GetBoolean("enabled") ?? false)
+        {
+            var vault = new VaultResources("vault", new VaultResourcesArgs
+            {
+                Version      = vaultCfg.Get("version")             ?? "0.32.0",
+                HaEnabled    = vaultCfg.GetBoolean("haEnabled")    ?? false,
+                HaReplicas   = vaultCfg.GetInt32("haReplicas")     ?? 3,
+                StorageClass = vaultCfg.Get("storageClass")        ?? "standard",
+                StorageSize  = vaultCfg.Get("storageSize")         ?? "1Gi",
+                SealConfig   = vaultCfg.Get("sealConfig")          ?? ""
+            });
+
+            // Vault Secrets Operator (livraison Vault → Secret K8s). DependsOn le
+            // serveur Vault (le chart s'installe en parallèle, mais on garde l'ordre).
+            _ = new VaultSecretsOperatorResources("vault-secrets-operator", new VaultSecretsOperatorResourcesArgs
+            {
+                Version = vaultCfg.Get("vsoVersion") ?? "1.4.0"
+            }, new ComponentResourceOptions { DependsOn = { vault } });
+        }
 
         // ── Observabilité ─────────────────────────────────────────────────────
         // OTel Collector + Jaeger (tracing) gérés ici. Prometheus + Grafana +

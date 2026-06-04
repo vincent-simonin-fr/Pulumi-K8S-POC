@@ -26,6 +26,8 @@ packages/
 appsettings.*.json
 !appsettings.json
 !appsettings.Development.json
+# Vault — clés d'unseal + root token en clair (init dev). NE JAMAIS committer.
+vault-init.json
 
 ## Logs
 logs/

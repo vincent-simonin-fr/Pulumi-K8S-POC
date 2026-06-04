@@ -150,6 +150,21 @@ config:
   gitops:targetRevision: "main"
   # gitops:repoUrl: "https://github.com/<org>/<repo>.git"
 
+  # ── Vault — coffre de secrets (HA Raft + auto-unseal KMS) ────────────────────
+  # Prod : HA Raft 3 nœuds (quorum) + storage RÉSEAU. L'auto-unseal passe par un
+  # KMS cloud (PAS de clés Shamir manuelles) → fournir la stanza HCL via sealConfig.
+  # ⚠️ L'accès du pod Vault au KMS se fait par identité de charge (IRSA / Workload
+  #    Identity), pas par une clé statique.
+  vault:enabled: "true"
+  vault:version: "0.32.0"
+  vault:vsoVersion: "1.4.0"
+  vault:haEnabled: "true"
+  vault:haReplicas: "3"
+  vault:storageClass: "gp3"     # ← ADAPTER au provider de stockage réseau
+  vault:storageSize: "10Gi"
+  # Exemple AWS — poser en --secret si tu préfères ne pas committer l'ARN :
+  #   pulumi config set vault:sealConfig 'seal "awskms" { region = "eu-west-1" kms_key_id = "arn:aws:kms:eu-west-1:123:key/abc" }'
+
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║  HA — état des composants                                                  ║
   # ║                                                                            ║

@@ -45,6 +45,15 @@ partial class Build : NukeBuild
     [Parameter("Nom du cluster Kind (défaut : ecommerce ; HA parallèle : ecommerce-ha).")]
     readonly string ClusterName = "ecommerce";
 
+    /// <summary>
+    /// Saute RecreateCluster (delete + create du cluster Kind) pour reprendre un
+    /// Launch interrompu directement au préchargement des images.
+    /// Usage : dotnet nuke Launch --skip-cluster-recreate
+    /// Utile si le cluster existe déjà et que seul PreloadImages/BuildImages a échoué.
+    /// </summary>
+    [Parameter("Reprend sans recréer le cluster Kind (saute RecreateCluster).")]
+    readonly bool SkipClusterRecreate;
+
     // Répertoire d'exécution Pulumi (relatif à la racine du repo).
     AbsolutePath PulumiDir   => RootDirectory / "infra" / "Ecommerce.Infra";
     AbsolutePath VersionFile => RootDirectory / "VERSION";
@@ -137,6 +146,9 @@ partial class Build : NukeBuild
 
     Target RecreateCluster => _ => _
         .Description("Supprime et recrée le cluster Kind ecommerce.")
+        // --skip-cluster-recreate : saute cette étape (cluster déjà en place) et laisse
+        // PreloadImages/BuildImages/pulumi up s'exécuter → reprise d'un Launch interrompu.
+        .OnlyWhenDynamic(() => !SkipClusterRecreate)
         .Executes(() =>
         {
             Assert.FileExists(KindConfig, $"kind-config.yaml introuvable : {KindConfig}");
@@ -183,6 +195,10 @@ partial class Build : NukeBuild
         "ghcr.io/kedacore/keda-admission-webhooks:2.17.0",
         // Metrics Server (chart 3.12.2 = app v0.7.2)
         "registry.k8s.io/metrics-server/metrics-server:v0.7.2",
+        // Vault (chart 0.32.0 = Vault 1.21.2). Injector désactivé → image serveur seule.
+        "hashicorp/vault:1.21.2",
+        // Vault Secrets Operator (chart 1.4.0).
+        "hashicorp/vault-secrets-operator:1.4.0",
     };
 
     // Images du mode RabbitMQ cluster (rabbitmq:cluster=true uniquement).

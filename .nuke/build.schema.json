@@ -122,6 +122,10 @@
           "type": "string",
           "description": "Passphrase du secrets provider Pulumi. À défaut, lue depuis PULUMI_CONFIG_PASSPHRASE",
           "default": "Secrets must be entered via 'nuke :secrets [profile]'"
+        },
+        "SkipClusterRecreate": {
+          "type": "boolean",
+          "description": "Reprend sans recréer le cluster Kind (saute RecreateCluster)"
         }
       }
     },
