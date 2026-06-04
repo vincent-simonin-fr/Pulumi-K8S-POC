@@ -160,14 +160,23 @@ partial class Build : NukeBuild
         "ghcr.io/cloudnative-pg/cloudnative-pg:1.25.1",
         "ghcr.io/cloudnative-pg/postgresql:16.6-bookworm",
         "ghcr.io/cloudnative-pg/pgbouncer:1.23.0",
-        // Observabilité
+        // Observabilité — tracing (géré par Pulumi : ObservabilityResources)
         "otel/opentelemetry-collector-contrib:0.153.0",
         "jaegertracing/all-in-one:1.76.0",
-        "prom/prometheus:v3.11.3",
+        // Observabilité — métriques via kube-prometheus-stack (chart 86.1.0).
+        // ⚠️ Ces tags suivent la version du chart (observability:kpStackVersion) :
+        //     les réaligner si le chart est bumpé, sinon pull live = très lent
+        //     (Prometheus distroless ≈ 155 Mo). Source de vérité :
+        //     kubectl get pods -n monitoring -o jsonpath='{..image}'
+        "quay.io/prometheus/prometheus:v3.12.0-distroless",
+        "quay.io/prometheus-operator/prometheus-operator:v0.91.0",
+        "quay.io/prometheus-operator/prometheus-config-reloader:v0.91.0",
+        "quay.io/prometheus/node-exporter:v1.11.1-distroless",
+        "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.0",
+        "quay.io/kiwigrid/k8s-sidecar:2.7.3",
         "grafana/grafana:13.0.1-security-01",
+        // postgres_exporter — géré par Pulumi (DatabaseResources), hors chart
         "prometheuscommunity/postgres-exporter:v0.16.0",
-        "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0",
-        "quay.io/prometheus/node-exporter:v1.9.1",
         // KEDA 2.17.0 (3 composants du chart)
         "ghcr.io/kedacore/keda:2.17.0",
         "ghcr.io/kedacore/keda-metrics-apiserver:2.17.0",
