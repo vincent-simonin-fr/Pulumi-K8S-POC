@@ -106,6 +106,14 @@
   "allOf": [
     {
       "properties": {
+        "ClusterName": {
+          "type": "string",
+          "description": "Nom du cluster Kind (défaut : ecommerce ; HA parallèle : ecommerce-ha)"
+        },
+        "kind-config": {
+          "type": "string",
+          "description": "Fichier de config Kind (défaut : kind-config.yaml ; HA : kind-config-multinode.yaml)"
+        },
         "NoDirtySuffix": {
           "type": "boolean",
           "description": "Désactive le suffixe -dirty sur les builds avec modifications non commitées"
