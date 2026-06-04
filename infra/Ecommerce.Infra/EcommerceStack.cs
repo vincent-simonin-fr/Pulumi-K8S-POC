@@ -28,6 +28,7 @@ public class EcommerceStack : Stack
         var metricsServerCfg = new Config("metricsServer");
         var gitopsCfg        = new Config("gitops");
         var rabbitmqCfg      = new Config("rabbitmq");
+        var vaultCfg         = new Config("vault");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -65,6 +66,46 @@ public class EcommerceStack : Stack
             Version            = metricsServerCfg.Get("version") ?? "3.12.2",
             KubeletInsecureTls = metricsServerCfg.GetBoolean("kubeletInsecureTls") ?? true
         });
+
+        // ── Vault (coffre de secrets) — Phase 1 : serveur Helm ───────────────
+        // Déployé scellé (SkipAwait). Init/unseal = Phase 2 ; VSO + moteur DB
+        // dynamique = Phase 3. Gardé par vault:enabled pour pouvoir le désactiver.
+        // Dev : standalone + storage fichier. Prod : HA Raft + auto-unseal KMS.
+        // Capturés ici pour brancher les CRDs VSO APRÈS la création du namespace ecommerce.
+        VaultSecretsOperatorResources? vso = null;
+        VaultConfigResources? vaultConfig = null;
+
+        if (vaultCfg.GetBoolean("enabled") ?? false)
+        {
+            var vault = new VaultResources("vault", new VaultResourcesArgs
+            {
+                Version      = vaultCfg.Get("version")             ?? "0.32.0",
+                HaEnabled    = vaultCfg.GetBoolean("haEnabled")    ?? false,
+                HaReplicas   = vaultCfg.GetInt32("haReplicas")     ?? 3,
+                StorageClass = vaultCfg.Get("storageClass")        ?? "standard",
+                StorageSize  = vaultCfg.Get("storageSize")         ?? "1Gi",
+                SealConfig   = vaultCfg.Get("sealConfig")          ?? ""
+            });
+
+            // Vault Secrets Operator (livraison Vault → Secret K8s). DependsOn le
+            // serveur Vault (le chart s'installe en parallèle, mais on garde l'ordre).
+            vso = new VaultSecretsOperatorResources("vault-secrets-operator", new VaultSecretsOperatorResourcesArgs
+            {
+                Version = vaultCfg.Get("vsoVersion") ?? "1.4.0"
+            }, new ComponentResourceOptions { DependsOn = { vault } });
+
+            // Config Vault (Option A : Job in-cluster). Créée UNIQUEMENT si vault:rootToken
+            // est renseigné → bootstrap : up (serveur) → init/unseal → config set --secret
+            // vault:rootToken → up (ce Job configure Vault). Cf. docs/vault.md.
+            if (!string.IsNullOrEmpty(vaultCfg.Get("rootToken")))
+            {
+                vaultConfig = new VaultConfigResources("vault-config", new VaultConfigResourcesArgs
+                {
+                    RootToken     = vaultCfg.GetSecret("rootToken") ?? (Input<string>)"",
+                    VaultImageTag = "1.21.2"
+                }, new ComponentResourceOptions { DependsOn = { vault } });
+            }
+        }
 
         // ── Observabilité ─────────────────────────────────────────────────────
         // OTel Collector + Jaeger (tracing) gérés ici. Prometheus + Grafana +
@@ -111,6 +152,27 @@ public class EcommerceStack : Stack
         });
 
         var namespaceName = ns.Metadata.Apply(m => m.Name);
+
+        // ── Livraison VSO (CRDs) ──────────────────────────────────────────────
+        // SA vault-auth + VaultConnection/VaultAuth/VaultDynamicSecret dans ecommerce
+        // → Secret K8s 'order-db-dynamic' rotaté. Nécessite VSO + Vault configuré +
+        // le namespace ecommerce. Créé seulement si la config Vault est active.
+        // Phase 3e : order-api consomme des creds PostgreSQL DYNAMIQUES (Vault/VSO)
+        // au lieu du secret statique. Opt-in (order-api dépendra alors du bootstrap Vault).
+        VaultSecretsResources? vaultSecrets = null;
+        if (vso != null && vaultConfig != null)
+        {
+            vaultSecrets = new VaultSecretsResources("vault-secrets", new VaultSecretsResourcesArgs
+            {
+                Namespace = "ecommerce"
+            }, new ComponentResourceOptions { DependsOn = { vso, vaultConfig, ns } });
+        }
+
+        // Dès que le pipeline VSO existe (Vault activé + bootstrappé), order-api et
+        // inventory-api consomment des creds PostgreSQL DYNAMIQUES. C'est la méthode :
+        // pas de flag par service. Tant que Vault n'est pas bootstrappé (vaultSecrets null),
+        // les apps restent sur le secret statique → aucun blocage au 1er déploiement.
+        var useDynamicCreds = vaultSecrets != null;
 
         // ── Secrets (ESO + ClusterSecretStore + ExternalSecrets) ─────────────
         //  Doit être créé AVANT les pods qui consomment les secrets.
@@ -272,10 +334,17 @@ public class EcommerceStack : Stack
                 : new ComponentResourceOptions { Providers = { manifestsProvider } };
 
         // ── Services applicatifs ──────────────────────────────────────────────
+        // order-api dépend de VSO (Secret dynamique) quand orderDynamicCreds est actif.
+        var orderOpts = AppOpts();
+        if (useDynamicCreds)
+            orderOpts.DependsOn.Add(vaultSecrets!);
+
         var orderApi = new OrderServiceResources("order-service", new ServiceResourcesArgs
         {
             Namespace      = namespaceName,
             Image          = orderApiCfg.Get("image") ?? "localhost/ecommerce/order-api:dev",
+            // ConnectionStrings__OrderDb : dynamique (Vault/VSO) si le pipeline existe, sinon statique.
+            DbCredentialsSecretName = useDynamicCreds ? "order-db-dynamic" : SecretsResources.OrderDbSecretName,
             // Init container : attend que le primary CNPG soit Ready (service -rw créé par CNPG).
             // La connection string ASP.NET Core passe par le Pooler (secrets → order-db-pooler).
             OrderDbHost    = dbResources.OrderDbRwServiceName,
@@ -294,12 +363,19 @@ public class EcommerceStack : Stack
                 CpuPercent    = hpaCfg.GetInt32("orderApiCpu") ?? 70,
                 MemoryPercent = hpaCfg.GetInt32("orderApiMemory")
             }
-        }, AppOpts());
+        }, orderOpts);
+
+        // inventory-api dépend de VSO (Secret dynamique) quand inventoryDynamicCreds est actif.
+        var invOpts = AppOpts();
+        if (useDynamicCreds)
+            invOpts.DependsOn.Add(vaultSecrets!);
 
         var inventoryApi = new InventoryServiceResources("inventory-service", new InventoryServiceResourcesArgs
         {
             Namespace             = namespaceName,
             Image                 = inventoryApiCfg.Get("image") ?? "localhost/ecommerce/inventory-api:dev",
+            // ConnectionStrings__InventoryDb : dynamique (Vault/VSO) si le pipeline existe, sinon statique.
+            DbCredentialsSecretName = useDynamicCreds ? "inventory-db-dynamic" : SecretsResources.InventoryDbSecretName,
             // Init container : attend que le primary CNPG soit Ready (service -rw créé par CNPG).
             InventoryDbHost       = dbResources.InventoryDbRwServiceName,
             RabbitMqHost          = mqResources.RabbitMqServiceName,
@@ -313,7 +389,7 @@ public class EcommerceStack : Stack
             MemoryRequest         = resourcesCfg.Get("inventoryApiMemoryRequest") ?? "128Mi",
             MemoryLimit           = resourcesCfg.Get("inventoryApiMemoryLimit")   ?? "256Mi",
             // Hpa : non passé — le scaling est géré par KEDA (ScaledObject ci-dessus).
-        }, AppOpts());
+        }, invOpts);
 
         var gateway = new GatewayResources("gateway", new GatewayResourcesArgs
         {

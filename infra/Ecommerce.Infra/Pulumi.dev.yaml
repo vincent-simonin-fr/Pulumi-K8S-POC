@@ -1,16 +1,22 @@
 encryptionsalt: v1:xj4hoKmTd2c=:v1:FgcGyMtAeIhtCKbK:CQO6o0UvlevmAveQNq3ETt31hTip5A==
 config:
   # Images Docker (Podman préfixe les images locales avec localhost/)
+
   # ⚠️ Ces 3 valeurs sont gérées automatiquement par `dotnet nuke BuildImages` :
+
   #    le script calcule un tag {SemVer}-{SHA-par-service} et fait `pulumi config set`.
+
   #    Les valeurs ":dev" ci-dessous ne servent que de fallback au tout premier build
+
   #    (avant le premier passage du script). Ne pas les éditer à la main ensuite.
   orderApi:image: localhost/ecommerce/order-api:1.0.0-30e7e62
   inventoryApi:image: localhost/ecommerce/inventory-api:1.0.0-800a3a1
   gateway:image: localhost/ecommerce/gateway:1.0.0-7234f8b
   # Port NodePort exposé sur Kind
+
   gateway:nodePort: "30080"
   # Réservation de stock
+
   reservation:ttlMinutes: "10"
   reservation:checkIntervalSeconds: "30"
   # Nombre de réplicas fixes (ignoré si HPA activé)
@@ -27,8 +33,11 @@ config:
   # request = garanti par le scheduler   |  limit = plafond (OOMKill si dépassé)
 
   # Format CPU : "100m" = 0.1 core       |  Format mémoire : "128Mi"
+
   # CpuRequest 200m : le bruit de fond .NET (GC + health probes) consomme ~60m.
+
   # Avec une request de 100m, le seuil HPA (70% = 70m) était frôlé au repos →
+
   # flapping 1↔2 sans trafic. 200m éloigne le seuil (140m) du repos.
   resources:orderApiCpuRequest: "200m"
   resources:orderApiCpuLimit: "750m"
@@ -77,15 +86,19 @@ config:
   # Ingress — désactivé en dev (NodePorts utilisés directement)
   ingress:enabled: "false"
   # Observabilite :
+
   #   - OTel Collector + Jaeger : gérés par ObservabilityResources
+
   #   - Prometheus + Grafana + node-exporter + kube-state-metrics : chart
+
   #     kube-prometheus-stack (Operator + ServiceMonitors). Voir docs/observability.md.
+
   # NodePorts exposes sur l'hote via Kind extraPortMappings (kind-config.yaml).
   observability:grafanaNodePort: "30030"
   observability:jaegerNodePort: "30686"
   observability:otelVersion: "0.153.0"
   observability:jaegerVersion: "1.76.0"
-  observability:kpStackVersion: "86.1.0"   # version du chart kube-prometheus-stack
+  observability:kpStackVersion: "86.1.0" # version du chart kube-prometheus-stack
   # ── Mode presale (flash sale, promo, événement) ─────────────────────────
 
   # Quand activé, les HPA sont forcés au minReplicas presale AVANT le pic.
@@ -177,9 +190,9 @@ config:
 
   #   0.28.x => opérateur 1.29.x  (latest stable)
   cnpg:version: "0.23.2"
-  cnpg:orderInstances: "3" # pods postgres order-db   (dev=1, prod=3)
-  cnpg:inventoryInstances: "3" # pods postgres inventory-db
-  cnpg:poolerInstances: "2" # pods PgBouncer par cluster (dev=1, prod=2)
+  cnpg:orderInstances: "1" # pods postgres order-db   (dev=1, prod=3)
+  cnpg:inventoryInstances: "1" # pods postgres inventory-db
+  cnpg:poolerInstances: "1" # pods PgBouncer par cluster (dev=1, prod=2)
   # ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ─────────
 
   # KEDA scale inventory-api sur la profondeur de la queue RabbitMQ.
@@ -212,10 +225,13 @@ config:
   keda:cooldownPeriod: "60" # secondes d'inactivité avant que KEDA demande le scale-in au HPA
   keda:scaleDownWindow: "240" # fenêtre de stabilisation HPA pour le scale-in (≈ temps total = cooldown + window)
   # ── RabbitMQ — mode déploiement ───────────────────────────────────────────
+
   # Dev (Kind mono-nœud) : Deployment simple 1 réplica. Le mode cluster (quorum
+
   # N nœuds via l'opérateur) n'a de sens qu'en prod multi-nœuds — voir Pulumi.prod.yaml.
+
   # cluster=false → pas d'opérateur installé (économie de ressources sur Kind).
-  rabbitmq:cluster: "true"
+  rabbitmq:cluster: "false"
   # ── Argo CD — GitOps Continuous Delivery ────────────────────────────────
 
   # Argo CD surveille un repo Git et réconcilie l'état du cluster.
@@ -268,3 +284,26 @@ config:
   gitops:path: "gitops/apps"
   gitops:targetRevision: "main"
   gitops:repoUrl: https://github.com/vincent-simonin-fr/Pulumi-K8S-POC.git
+  # ── Vault — coffre de secrets (HashiCorp) ──────────────────────────────
+
+  # Dev : STANDALONE + storage fichier (1 pod, simple). Pas de KMS local →
+
+  # unseal Shamir automatisé par le Job d'init (Phase 2). Prod : HA Raft +
+
+  # auto-unseal KMS (voir Pulumi.prod.yaml). Chart 0.32.0 = Vault 1.21.2.
+  vault:enabled: "true"
+  vault:version: "0.32.0"
+  vault:haEnabled: "false"
+  vault:storageClass: "standard"
+  vault:storageSize: "1Gi"
+  vault:vsoVersion: "1.4.0" # Vault Secrets Operator (livraison Vault → Secret K8s)
+  # Bootstrap : après init/unseal, fournir le root token pour activer le Job de config :
+  #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
+  # Sans cette clé, le serveur + VSO sont déployés mais Vault n'est PAS configuré.
+  # Cf. docs/vault.md.
+  # Phase 3e : une fois Vault bootstrappé (rootToken posé ci-dessous), order-api ET
+  # inventory-api consomment AUTOMATIQUEMENT des creds PostgreSQL dynamiques (Secrets
+  # order-db-dynamic / inventory-db-dynamic, rotatés par VSO). Aucun flag : c'est la
+  # méthode. Sans rootToken, les apps restent sur les secrets statiques.
+  vault:rootToken:
+    secure: v1:PcxdE0GBqDH5gOgF:82upEXyu018sZUny2VL/NjpZsXuObtE0Yg48Bywt0xM283I/0ojWhtP1xfk=

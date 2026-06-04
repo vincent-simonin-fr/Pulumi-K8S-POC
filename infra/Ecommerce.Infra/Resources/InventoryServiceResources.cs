@@ -15,6 +15,13 @@ public class InventoryServiceResourcesArgs
     public Input<string> RabbitMqHost { get; set; } = "rabbitmq";
     public Input<string> OtelEndpoint { get; set; } = "http://localhost:4317";
     public Input<string> RedisConnectionString { get; set; } = "redis:6379";
+
+    /// <summary>
+    /// Nom du Secret K8s fournissant ConnectionStrings__InventoryDb.
+    /// Défaut : secret statique. "inventory-db-dynamic" quand vault:inventoryDynamicCreds=true.
+    /// </summary>
+    public Input<string> DbCredentialsSecretName { get; set; } = SecretsResources.InventoryDbSecretName;
+
     public int ReservationTtlMinutes { get; set; } = 10;
     public int CheckIntervalSeconds { get; set; } = 30;
     public int Replicas { get; set; } = 1;
@@ -107,8 +114,8 @@ public class InventoryServiceResources : ComponentResource
                             // Variables non secrètes depuis le ConfigMap
                             EnvFrom = new List<EnvFromSourceArgs>
                             {
-                                // ✅ ConnectionStrings__InventoryDb injecté depuis le secret ESO
-                                new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.InventoryDbSecretName } },
+                                // ✅ ConnectionStrings__InventoryDb : secret statique OU dynamique (Vault/VSO)
+                                new() { SecretRef = new SecretEnvSourceArgs { Name = args.DbCredentialsSecretName } },
                                 // ✅ RabbitMQ__Username + RabbitMQ__Password injectés depuis le secret ESO
                                 new() { SecretRef = new SecretEnvSourceArgs { Name = SecretsResources.RabbitMqSecretName } }
                             },

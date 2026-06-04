@@ -175,6 +175,13 @@ Définit les `requests` (garanti par le scheduler) et `limits` (plafond, OOMKill
 
 Les valeurs sensibles sont lues par `SecretsResources` pour créer les K8s Secrets natifs.
 
+> **Statique (défaut) vs dynamique (Vault).** Par défaut, order-api / inventory-api
+> utilisent ces secrets **statiques** pour se connecter à PostgreSQL — c'est le mode dev
+> simple. Quand **Vault est bootstrappé**, les apps basculent automatiquement sur des
+> **credentials dynamiques** (utilisateur PostgreSQL éphémère par bail, rotaté par VSO).
+> Les mots de passe statiques ci-dessous restent nécessaires (bootstrap de l'utilisateur
+> `app` côté CNPG + postgres-exporter). Détails : [vault.md](vault.md).
+
 ### Clés disponibles
 
 | Clé | Défaut | Sensible | Description |

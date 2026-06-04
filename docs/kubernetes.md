@@ -344,7 +344,7 @@ kubectl rollout restart deployment metrics-server -n kube-system
 
 Procédure pour repartir d'un état totalement propre.
 
-### Étape 1 — Annuler l'état Pulumi
+### Étape 1 — Réinitialiser l'état Pulumi
 
 ```bash
 cd infra/Ecommerce.Infra
@@ -352,9 +352,23 @@ cd infra/Ecommerce.Infra
 # Si pulumi up tourne encore
 pulumi cancel
 
+# ⚠️ pulumi stack rm SUPPRIME aussi Pulumi.dev.yaml (toute la config du stack :
+#    versions de charts, secrets chiffrés, flags...). On le sauvegarde avant,
+#    on le restaure après, puis on recrée un stack vierge.
+cp Pulumi.dev.yaml Pulumi.dev.yaml.bak        # PowerShell : Copy-Item Pulumi.dev.yaml Pulumi.dev.yaml.bak
+
 # Supprimer le stack (--force ignore les ressources encore listées dans l'état)
 pulumi stack rm dev --force
+
+# Restaurer la config et recréer un stack vierge
+mv -f Pulumi.dev.yaml.bak Pulumi.dev.yaml     # PowerShell : Move-Item -Force Pulumi.dev.yaml.bak Pulumi.dev.yaml
+pulumi stack init dev
+pulumi stack select dev
 ```
+
+> **Pourquoi cette gymnastique ?** `stack rm` remet l'état Pulumi à zéro (utile quand
+> l'état est désynchronisé du cluster — ex. cluster recréé hors Pulumi), mais il efface
+> le fichier de config au passage. La sauvegarde/restauration garde tous tes réglages.
 
 ### Étape 2 — Supprimer le cluster
 
