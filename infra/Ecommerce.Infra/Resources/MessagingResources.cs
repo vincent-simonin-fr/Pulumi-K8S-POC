@@ -110,7 +110,9 @@ public class MessagingResources : ComponentResource
                             Ports = new List<ContainerPortArgs>
                             {
                                 new() { ContainerPortValue = 5672, Name = "amqp" },
-                                new() { ContainerPortValue = 15672, Name = "management" }
+                                new() { ContainerPortValue = 15672, Name = "management" },
+                                // Métriques Prometheus (plugin rabbitmq_prometheus, activé par défaut).
+                                new() { ContainerPortValue = 15692, Name = "prometheus" }
                             },
                             // RABBITMQ_DEFAULT_USER / RABBITMQ_DEFAULT_PASS injectés depuis le secret ESO.
                             EnvFrom = new EnvFromSourceArgs
@@ -157,6 +159,9 @@ public class MessagingResources : ComponentResource
                 }
             }
         }, resourceOpts);
+
+        // Métriques Prometheus : pods étiquetés app=rabbitmq (Deployment), 1 pod → ClusterIP normal.
+        CreateRabbitmqMetricsService(args, resourceOpts, "app", "rabbitmq", headless: false);
     }
 
     // ── Mode PROD : RabbitmqCluster via l'opérateur ───────────────────────────
@@ -243,29 +248,42 @@ spec:
             DependsOn = { defaultUserSecret }
         });
 
-        // L'opérateur crée automatiquement un Service "rabbitmq" (nom du cluster)
-        // exposant amqp:5672 + management:15672 → identique au mode Deployment.
-        //
-        // Service HEADLESS dédié aux métriques Prometheus (port 15692).
-        // Pourquoi headless (clusterIP: None) ? Chaque nœud RabbitMQ expose SES PROPRES
-        // métriques sur 15692. Un Service classique load-balancerait → Prometheus ne
-        // verrait qu'un nœud aléatoire par scrape. Le headless résout en DNS vers les
-        // 3 IPs de pods → Prometheus (dns_sd_configs) scrape les 3 nœuds individuellement.
+        // L'opérateur crée automatiquement un Service "rabbitmq" (amqp:5672 + management:15672),
+        // identique au mode Deployment.
+        // Métriques : pods étiquetés app.kubernetes.io/name=rabbitmq (opérateur), N nœuds
+        // → headless pour scraper chaque nœud individuellement.
+        CreateRabbitmqMetricsService(args, resourceOpts, "app.kubernetes.io/name", "rabbitmq", headless: true);
+    }
+
+    // ── Service métriques Prometheus (partagé Deployment / cluster) ────────────
+    // Ciblé par le ServiceMonitor 'rabbitmq' : label monitoring=ecommerce + port nommé
+    // 'prometheus' (15692, plugin rabbitmq_prometheus).
+    //   selectorKey/selectorVal : label des pods RabbitMQ — diffère selon le créateur
+    //     (nous en Deployment : app=rabbitmq ; l'opérateur en cluster :
+    //      app.kubernetes.io/name=rabbitmq).
+    //   headless : true en cluster — N nœuds exposent CHACUN leurs métriques sur 15692,
+    //     un ClusterIP load-balancerait sur un nœud au hasard ; le headless (clusterIP:None)
+    //     résout vers toutes les IP de pods → Prometheus scrape chaque nœud. false en dev (1 pod).
+    private void CreateRabbitmqMetricsService(
+        MessagingResourcesArgs args, CustomResourceOptions opts,
+        string selectorKey, string selectorVal, bool headless)
+    {
+        var spec = new ServiceSpecArgs
+        {
+            Selector = new InputMap<string> { [selectorKey] = selectorVal },
+            Ports    = new ServicePortArgs { Name = "prometheus", Port = 15692, TargetPort = 15692 }
+        };
+        if (headless) spec.ClusterIP = "None";   // scrape par nœud (N pods) ; sinon ClusterIP par défaut
+
         _ = new Service("rabbitmq-metrics", new ServiceArgs
         {
             Metadata = new ObjectMetaArgs
             {
                 Namespace = args.Namespace,
                 Name      = "rabbitmq-metrics",
-                // Label monitoring=ecommerce : cible du ServiceMonitor (Prometheus Operator).
                 Labels    = new InputMap<string> { ["monitoring"] = "ecommerce" }
             },
-            Spec = new ServiceSpecArgs
-            {
-                ClusterIP = "None",   // headless
-                Selector  = new InputMap<string> { ["app.kubernetes.io/name"] = "rabbitmq" },
-                Ports     = new ServicePortArgs { Name = "prometheus", Port = 15692, TargetPort = 15692 }
-            }
-        }, resourceOpts);
+            Spec = spec
+        }, opts);
     }
 }
