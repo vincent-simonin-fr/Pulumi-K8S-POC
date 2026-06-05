@@ -140,7 +140,11 @@ partial class Build : NukeBuild
             Serilog.Log.Information(" Gateway    -> http://localhost:30080");
             Serilog.Log.Information(" Grafana    -> http://localhost:30030");
             Serilog.Log.Information(" Jaeger     -> http://localhost:30686");
-            Serilog.Log.Information(" Argo CD    -> kubectl port-forward -n argocd svc/argocd-server 8080:80");
+            Serilog.Log.Information(" Argo CD    -> http://localhost:8080  (kubectl port-forward -n argocd svc/argocd-server 8080:80)");
+            Serilog.Log.Information(" Vault      -> http://localhost:8200  (kubectl port-forward -n vault svc/vault 8200:8200)");
+            Serilog.Log.Information(" MinIO      -> http://localhost:9001  (kubectl port-forward -n minio svc/minio-console 9001:9001)");
+            Serilog.Log.Information(" Prometheus -> http://localhost:9090  (kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090)");
+            Serilog.Log.Information(" RabbitMQ   -> http://localhost:15672 (kubectl port-forward -n ecommerce svc/rabbitmq 15672:15672)");
             Serilog.Log.Information("══════════════════════════════════════════════");
         });
 
@@ -199,6 +203,9 @@ partial class Build : NukeBuild
         "hashicorp/vault:1.21.2",
         // Vault Secrets Operator (chart 1.4.0).
         "hashicorp/vault-secrets-operator:1.4.0",
+        // MinIO (object storage S3 pour les backups CNPG — chart 5.4.0). Le Job de
+        // création de bucket tire minio/mc en live (petite image).
+        "quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z",
     };
 
     // Images du mode RabbitMQ cluster (rabbitmq:cluster=true uniquement).

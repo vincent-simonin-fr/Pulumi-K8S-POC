@@ -105,6 +105,17 @@ config:
   cnpg:poolerInstances: "2"
   cnpg:storageClass: "gp3"      # ← ADAPTER à votre provider de stockage réseau
   cnpg:storageSize: "10Gi"
+  # ── Backups CNPG (Barman → object storage cloud) ─────────────────────────────
+  # En prod : PAS de MinIO local → pointer un bucket S3/GCS/Azure managé.
+  #   minio:enabled=false (on ne déploie pas MinIO), cnpg:backupEndpoint=endpoint cloud,
+  #   et fournir les clés S3 via --secret (minio:rootUser / minio:rootPassword), ou mieux,
+  #   un accès par identité de charge (IRSA/WI) à adapter. Cf. proposition openspec cnpg-backups.
+  cnpg:backupEnabled: "true"
+  minio:enabled: "false"
+  cnpg:backupBucket: "ecommerce-cnpg-backups"      # ← bucket cloud
+  cnpg:backupEndpoint: "https://s3.eu-west-1.amazonaws.com"   # ← endpoint S3 (ou GCS/Azure)
+  cnpg:backupRetention: "30d"
+  # pulumi config set --secret minio:rootUser <access-key> ; --secret minio:rootPassword <secret-key>
 
   # ── RabbitMQ — cluster quorum HA (RabbitMQ Cluster Operator) ─────────────────
   # cluster=true installe l'opérateur + déploie un RabbitmqCluster N nœuds avec

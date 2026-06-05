@@ -193,6 +193,16 @@ config:
   cnpg:orderInstances: "1" # pods postgres order-db   (dev=1, prod=3)
   cnpg:inventoryInstances: "1" # pods postgres inventory-db
   cnpg:poolerInstances: "1" # pods PgBouncer par cluster (dev=1, prod=2)
+  # ── Backups CNPG (Barman → MinIO en dev, S3/GCS en prod) ───────────────
+  # backupEnabled=true → WAL archiving + ScheduledBackup quotidien vers MinIO.
+  # MinIO (object storage S3-compatible) est déployé localement (minio:enabled suit
+  # backupEnabled). En prod : minio:enabled=false + cnpg:backupEndpoint=bucket cloud.
+  # ⚠️ minio:rootPassword : changer via `pulumi config set --secret minio:rootPassword <pw>` (≥8 car.).
+  cnpg:backupEnabled: "true"
+  cnpg:backupBucket: "cnpg-backups"
+  cnpg:backupRetention: "7d" # dev : rétention courte
+  minio:rootUser: "minio"
+  minio:storageSize: "5Gi"
   # ── KEDA — Kubernetes Event-Driven Autoscaling (inventory-api) ─────────
 
   # KEDA scale inventory-api sur la profondeur de la queue RabbitMQ.
@@ -299,8 +309,11 @@ config:
   vault:vsoVersion: "1.4.0" # Vault Secrets Operator (livraison Vault → Secret K8s)
   # Bootstrap Vault : APRÈS init/unseal, poser le root token pour activer le Job de config :
 
-  #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
+  vault:rootToken:
+    secure: v1:4RU6HZXvcPnm5ovV:jEaGbE5LAj47hDxFXbbiBSUc/R2mdi55MU5bBXKkgKd0eDO08JiqkawT8Pc=
 
-  # ⚠️ NE PAS committer : le rootToken (comme vault-init.json) est lié à UNE instance
+#   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
 
-  #    Vault → caduc à chaque reset de cluster. Le poser localement après le bootstrap.
+# ⚠️ NE PAS committer : le rootToken (comme vault-init.json) est lié à UNE instance
+
+#    Vault → caduc à chaque reset de cluster. Le poser localement après le bootstrap.

@@ -38,6 +38,25 @@ public class DatabaseResourcesArgs
 
     /// <summary>Taille des volumes PostgreSQL. Configurable via cnpg:storageSize. Dev : 1Gi, prod : 10Gi+.</summary>
     public string StorageSize { get; set; } = "1Gi";
+
+    // ── Backups (Barman → object storage S3-compatible : MinIO en dev, cloud en prod) ──
+    /// <summary>Active les backups CNPG (WAL archiving + ScheduledBackup). Via cnpg:backupEnabled.</summary>
+    public bool BackupEnabled { get; set; } = false;
+
+    /// <summary>Endpoint S3 (MinIO en dev). Via cnpg:backupEndpoint.</summary>
+    public string BackupEndpoint { get; set; } = "http://minio.minio.svc.cluster.local:9000";
+
+    /// <summary>Bucket cible des backups. Via cnpg:backupBucket.</summary>
+    public string BackupBucket { get; set; } = "cnpg-backups";
+
+    /// <summary>Politique de rétention Barman (ex. 30d). Via cnpg:backupRetention.</summary>
+    public string BackupRetention { get; set; } = "30d";
+
+    /// <summary>Access key S3 (= rootUser MinIO). Via minio:rootUser.</summary>
+    public Input<string> BackupAccessKey { get; set; } = "minio";
+
+    /// <summary>Secret key S3 (= rootPassword MinIO). Via minio:rootPassword (--secret).</summary>
+    public Input<string> BackupSecretKey { get; set; } = "minio-dev-password";
 }
 
 /// <summary>
@@ -96,6 +115,21 @@ public class DatabaseResources : ComponentResource
         : base("ecommerce:infra:DatabaseResources", name, opts)
     {
         var resourceOpts = new CustomResourceOptions { Parent = this };
+
+        // Secret S3 partagé par les deux clusters pour Barman (créé une seule fois).
+        // Les deux Clusters CNPG le référencent dans backup.barmanObjectStore.s3Credentials.
+        if (args.BackupEnabled)
+        {
+            _ = new Secret("cnpg-backup-creds", new SecretArgs
+            {
+                Metadata   = new ObjectMetaArgs { Namespace = args.Namespace, Name = "cnpg-backup-creds" },
+                StringData = new InputMap<string>
+                {
+                    ["ACCESS_KEY_ID"]     = args.BackupAccessKey,
+                    ["ACCESS_SECRET_KEY"] = args.BackupSecretKey
+                }
+            }, resourceOpts);
+        }
 
         // ── Order DB ──────────────────────────────────────────────────────────
         // Bootstrap secret (app user) : CNPG 1.25.x gère le mot de passe du user owner (app).
@@ -328,7 +362,42 @@ public class DatabaseResources : ComponentResource
         // Le Pooler utilise ce même secret pour l'authQuery pg_shadow.
         var superuserSecretName = $"{clusterName}-superuser-config";
 
-        var yaml = args.Namespace.Apply(ns => $@"apiVersion: postgresql.cnpg.io/v1
+        // Bloc backup Barman (S3/MinIO) — inséré dans le spec du Cluster si activé.
+        var backupBlock = !args.BackupEnabled ? "" : $@"
+  backup:
+    retentionPolicy: ""{args.BackupRetention}""
+    barmanObjectStore:
+      destinationPath: s3://{args.BackupBucket}/
+      endpointURL: {args.BackupEndpoint}
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-backup-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-backup-creds
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip";
+
+        var yaml = args.Namespace.Apply(ns =>
+        {
+            // ScheduledBackup (base backup quotidien à 02:00 — cron 6 champs CNPG) si activé.
+            var scheduledBackup = !args.BackupEnabled ? "" : $@"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {clusterName}-daily
+  namespace: {ns}
+spec:
+  schedule: ""0 0 2 * * *""
+  backupOwnerReference: self
+  cluster:
+    name: {clusterName}";
+
+            return $@"apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: {clusterName}
@@ -362,7 +431,7 @@ spec:
       database: {dbName}
       owner: app
       secret:
-        name: {clusterName}-app-bootstrap
+        name: {clusterName}-app-bootstrap{backupBlock}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Pooler
@@ -384,7 +453,8 @@ spec:
       default_pool_size: ""80""
     authQuery: ""SELECT usename, passwd FROM pg_shadow WHERE usename=$1""
     authQuerySecret:
-      name: {superuserSecretName}");
+      name: {superuserSecretName}{scheduledBackup}";
+        });
 
         // DependsOn bootstrapSecret + superuserSecret : les deux secrets doivent exister
         // dans K8s avant que CNPG lise initdb.secret et superuserSecret.

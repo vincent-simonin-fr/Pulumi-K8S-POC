@@ -213,6 +213,32 @@ public class EcommerceStack : Stack
             DependsOn = { secretsResources, cnpgResources }
         };
 
+        // ── MinIO + backups CNPG (Barman → object storage S3-compatible) ─────
+        // Activé par cnpg:backupEnabled. MinIO = cible S3 LOCALE (dev, sans cloud) ;
+        // en prod, pointer un bucket cloud (mêmes clés S3). Creds partagés MinIO ↔ CNPG.
+        var minioCfg      = new Config("minio");
+        var backupEnabled = cnpgCfg.GetBoolean("backupEnabled") ?? false;
+        var minioUser     = minioCfg.Get("rootUser") ?? "minio";
+        var minioPassword = minioCfg.GetSecret("rootPassword") ?? (Input<string>)"minio-dev-password";
+        var backupBucket  = cnpgCfg.Get("backupBucket") ?? "cnpg-backups";
+
+        // Déployer MinIO ? Par défaut suit backupEnabled (dev). En prod, mettre
+        // minio:enabled=false et pointer cnpg:backupEndpoint vers un bucket cloud.
+        var minioEnabled = minioCfg.GetBoolean("enabled") ?? backupEnabled;
+        if (minioEnabled)
+        {
+            var minio = new MinioResources("minio", new MinioResourcesArgs
+            {
+                Version      = minioCfg.Get("version")      ?? "5.4.0",
+                RootUser     = minioUser,
+                RootPassword = minioPassword,
+                Bucket       = backupBucket,
+                StorageClass = cnpgCfg.Get("storageClass") ?? "standard",
+                StorageSize  = minioCfg.Get("storageSize") ?? "5Gi"
+            });
+            if (backupEnabled) cnpgSecretsDep.DependsOn.Add(minio); // CNPG attend MinIO local (endpoint+bucket)
+        }
+
         // ── Infrastructure (PostgreSQL CNPG + RabbitMQ + Redis) ──────────────
         var dbResources = new DatabaseResources("databases", new DatabaseResourcesArgs
         {
@@ -225,6 +251,13 @@ public class EcommerceStack : Stack
             // Dev : standard (local-path). Prod multi-nœuds : stockage RÉSEAU obligatoire.
             StorageClass        = cnpgCfg.Get("storageClass")            ?? "standard",
             StorageSize         = cnpgCfg.Get("storageSize")             ?? "1Gi",
+            // Backups Barman (gardé par cnpg:backupEnabled) → MinIO/S3.
+            BackupEnabled       = backupEnabled,
+            BackupEndpoint      = minioCfg.Get("endpoint")      ?? "http://minio.minio.svc.cluster.local:9000",
+            BackupBucket        = backupBucket,
+            BackupRetention     = cnpgCfg.Get("backupRetention") ?? "30d",
+            BackupAccessKey     = minioUser,
+            BackupSecretKey     = minioPassword,
         }, cnpgSecretsDep);
 
         // ── RabbitMQ — Deployment (dev) ou Cluster Operator (prod HA) ─────────
@@ -481,6 +514,16 @@ public class EcommerceStack : Stack
             JaegerUrl             = Output.Create($"http://localhost:{jaegerNodePort}");
             ArgocdUrl             = Output.Create("http://localhost:8080 (kubectl port-forward -n argocd svc/argocd-server 8080:80)");
         }
+
+        // Accès par PORT-FORWARD (pas de NodePort/ingress) — mêmes commandes prod/dev.
+        VaultUrl        = Output.Create((vaultCfg.GetBoolean("enabled") ?? false)
+            ? "http://localhost:8200 (kubectl port-forward -n vault svc/vault 8200:8200) — login = root token"
+            : "(vault disabled)");
+        MinioConsoleUrl = Output.Create(minioEnabled
+            ? "http://localhost:9001 (kubectl port-forward -n minio svc/minio-console 9001:9001) — login = minio:rootUser/rootPassword"
+            : "(minio disabled)");
+        PrometheusUrl   = Output.Create("http://localhost:9090 (kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090)");
+        RabbitMqUrl     = Output.Create("http://localhost:15672 (kubectl port-forward -n ecommerce svc/rabbitmq 15672:15672) — login = secret rabbitmq-credentials");
     }
 
     [Output] public Output<string> GatewayUrl            { get; set; }
@@ -489,4 +532,8 @@ public class EcommerceStack : Stack
     [Output] public Output<string> GrafanaUrl            { get; set; }
     [Output] public Output<string> JaegerUrl             { get; set; }
     [Output] public Output<string> ArgocdUrl             { get; set; }
+    [Output] public Output<string> VaultUrl              { get; set; }
+    [Output] public Output<string> MinioConsoleUrl       { get; set; }
+    [Output] public Output<string> PrometheusUrl         { get; set; }
+    [Output] public Output<string> RabbitMqUrl           { get; set; }
 }
