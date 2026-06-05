@@ -10,43 +10,41 @@ tasks) — implémentable via `/opsx:apply <nom>`.
 
 ---
 
-## 🔴 P0 — Critique (à faire en premier)
-
-- [ ] **Sauvegardes CNPG (DR)** — `openspec/changes/cnpg-backups/`
-  HA ≠ DR : 3 instances protègent d'une panne de nœud, **pas** d'un `DROP TABLE` ni d'une
-  corruption. Backups Barman + WAL archiving (object storage) + `ScheduledBackup` + **PITR testé**.
-  *C'est le manque le plus grave : aujourd'hui, une erreur = perte de données irréversible.*
-
----
-
 ## 🟠 P1 — Important (sécurité & exploitabilité)
 
 - [ ] **Alerting** — `openspec/changes/observability-alerting/`
-  Dashboards présents mais **zéro alerte** : rien ne réveille en cas d'incident. Activer
-  Alertmanager + `PrometheusRule` (CrashLoop, CNPG primary down, RabbitMQ quorum, latence
-  p95, saturation pool PG, **échec de backup**) + récepteur (Slack/PagerDuty).
-  *Complète directement P0 : alerter sur l'échec des sauvegardes.*
+      Dashboards présents mais **zéro alerte** : rien ne réveille en cas d'incident. Activer
+      Alertmanager + `PrometheusRule` (CrashLoop, CNPG primary down, RabbitMQ quorum, latence
+      p95, saturation pool PG, **échec de backup**) + récepteur (Slack/PagerDuty).
+      _Désormais le chantier le plus prioritaire : les backups existent (P0 livré) mais rien
+      n'alerte si un `ScheduledBackup` échoue ou si l'archivage WAL décroche._
 
 - [ ] **Durcissement des secrets statiques** — `openspec/changes/secrets-hardening/`
-  `rabbitmq-credentials`, Grafana, mot de passe `app` restent lisibles via
-  `kubectl get secret | base64 -d`. RBAC least-privilege + chiffrement at-rest (KMS) +
-  audit + sourcing Vault KV. *(Les creds DB sont déjà dynamiques — ceux-ci sont la suite.)*
+      `rabbitmq-credentials`, Grafana, mot de passe `app` restent lisibles via
+      `kubectl get secret | base64 -d`. RBAC least-privilege + chiffrement at-rest (KMS) +
+      audit + sourcing Vault KV. _(Les creds DB sont déjà dynamiques — ceux-ci sont la suite.)_
 
 ## 🟡 P2 — Amélioration (résilience & cible prod)
 
 - [ ] **PDB + NetworkPolicies** — `openspec/changes/pdb-networkpolicies/`
-  Sans PDB, un drain peut évincer tous les réplicas d'un service ; sans NetworkPolicy, tout
-  pod parle à tout pod. PDB `minAvailable` + default-deny + flux ciblés (CNI réel requis).
-  *PDB = quick win ; NetworkPolicies = à valider sous Calico/Cilium (no-op sur kindnet).*
+      Sans PDB, un drain peut évincer tous les réplicas d'un service ; sans NetworkPolicy, tout
+      pod parle à tout pod. PDB `minAvailable` + default-deny + flux ciblés (CNI réel requis).
+      _PDB = quick win ; NetworkPolicies = à valider sous Calico/Cilium (no-op sur kindnet)._
 
 - [ ] **Config Vault déclarative (cible prod)** — `openspec/changes/vault-config-pulumi-provider/`
-  Remplacer le Job de bootstrap in-cluster (Option A, dev) par le provider `pulumi-vault`
-  (Option B) : auth k8s + DB engine + rôles + policies déclaratifs, idempotents, diffables.
+      Remplacer le Job de bootstrap in-cluster (Option A, dev) par le provider `pulumi-vault`
+      (Option B) : auth k8s + DB engine + rôles + policies déclaratifs, idempotents, diffables.
 
 ---
 
 ## ✅ Déjà livré (pour mémoire)
 
+- **Sauvegardes CNPG (DR)** — Barman + WAL archiving → **MinIO** (S3), `ScheduledBackup`
+  quotidien, **PITR testé de bout en bout** (DROP TABLE récupéré à l'instant T), **RPO/RTO
+  documentés** (`docs/backups.md`). _(ex-P0)_
+- **Probes gateway « shallow »** — liveness/readiness découplées de la santé de l'aval
+  (`/health/live` + `/health/ready`) : une panne order-api/inventory-api ne fait plus
+  crashlooper la gateway ni déclencher de scale HPA parasite (`docs/architecture.md`).
 - Observabilité migrée vers **kube-prometheus-stack** (Operator + ServiceMonitors, 6 dashboards).
 - **HA multi-nœuds** validée (anti-affinité, failover CNPG/RabbitMQ, spike 1000 VU).
 - **Vault** : serveur + VSO + config + **creds PostgreSQL dynamiques** (order-api + inventory-api).
@@ -56,7 +54,5 @@ tasks) — implémentable via `/opsx:apply <nom>`.
 
 ## Notes diverses
 
-- ⚠️ **Vault dev** : le root token a transité en clair lors d'une session → re-init au besoin
-  (cf. `docs/vault.md`). `vault-init.json` + `vault:rootToken` sont **par instance** (caducs au reset).
 - Compte Vault **non-root** (userpass/AppRole) pour ne plus utiliser le root token au quotidien.
 - `pg_hba` prod : passer `trust` → `scram-sha-256` + `enableSuperuserAccess` (paramétrage par stack).

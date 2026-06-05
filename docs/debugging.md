@@ -208,13 +208,22 @@ kubectl logs -n ecommerce -l app=order-db --previous
 
 **Symptôme** : `gateway-xxx` est `0/1 Running` depuis longtemps.
 
-**Cause** : la readiness probe (`/health`) retourne une erreur — généralement parce que les services upstream (order-api ou inventory-api) ne sont pas encore prêts.
+**Cause** : la readiness probe (`/health/ready`) échoue. Cette probe est volontairement
+**« shallow »** — elle ne teste **que** les dépendances propres de la gateway et **exclut**
+la santé de l'aval (order-api/inventory-api). Donc une panne aval ne devrait **pas** mettre
+la gateway NotReady (ni la faire crashlooper via la liveness `/health/live`) : c'est par
+design, pour éviter qu'un incident DB/API en aval ne se propage au front et ne déclenche
+un scale HPA inutile. Si `/health/ready` échoue malgré tout, c'est la gateway elle-même
+(process qui ne démarre pas, port 8080, config YARP invalide).
 
 ```bash
 kubectl describe pod -n ecommerce -l app=gateway
 # Chercher les derniers events : "Readiness probe failed"
 
 kubectl logs -n ecommerce deploy/gateway
+
+# État de l'aval (pour info — n'affecte PAS la readiness de la gateway) :
+curl -s http://localhost:30080/health/upstream | python -m json.tool
 ```
 
 ---

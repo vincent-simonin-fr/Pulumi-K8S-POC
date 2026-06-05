@@ -45,6 +45,23 @@ try
 
     app.MapReverseProxy();
 
+    // ── Health endpoints ─────────────────────────────────────────────────────
+    // Probes K8s = "shallow" : la gateway répond-elle ? Elles ne doivent JAMAIS
+    // dépendre de la santé de l'aval — sinon une panne d'order-api/inventory-api
+    // ferait crashlooper la gateway (liveness) et la sortirait du Service
+    // (readiness), propageant l'incident au lieu de le contenir.
+    //
+    // liveness : le process vit-il ? (aucun check → 200 dès que l'app répond)
+    app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+    // readiness : dépendances PROPRES de la gateway (on exclut les checks "upstream")
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        Predicate = check => !check.Tags.Contains("upstream")
+    });
+
+    // Agrégat (process + santé des upstreams) : pour humains / dashboards /
+    // monitoring synthétique — NON câblé aux probes. YARP gère déjà le 503 par
+    // route via son HealthCheck actif/passif par cluster.
     app.MapHealthChecks("/health");
     app.MapHealthChecks("/health/upstream", new HealthCheckOptions
     {

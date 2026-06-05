@@ -1,4 +1,3 @@
-encryptionsalt: v1:xj4hoKmTd2c=:v1:FgcGyMtAeIhtCKbK:CQO6o0UvlevmAveQNq3ETt31hTip5A==
 config:
   # Images Docker (Podman préfixe les images locales avec localhost/)
 
@@ -11,7 +10,7 @@ config:
   #    (avant le premier passage du script). Ne pas les éditer à la main ensuite.
   orderApi:image: localhost/ecommerce/order-api:1.0.0-30e7e62
   inventoryApi:image: localhost/ecommerce/inventory-api:1.0.0-800a3a1
-  gateway:image: localhost/ecommerce/gateway:1.0.0-7234f8b
+  gateway:image: localhost/ecommerce/gateway:1.0.0-e8c17ab
   # Port NodePort exposé sur Kind
 
   gateway:nodePort: "30080"
@@ -308,6 +307,7 @@ config:
   vault:storageSize: "1Gi"
   vault:vsoVersion: "1.4.0" # Vault Secrets Operator (livraison Vault → Secret K8s)
   # Bootstrap Vault : APRÈS init/unseal, poser le root token pour activer le Job de config :
+
 
   #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
 

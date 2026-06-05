@@ -130,7 +130,15 @@ pulumi-k8s/
 |---|---|
 | `/orders/**` | Order API |
 | `/inventory/**` | Inventory API |
-| `/health` | Gateway elle-même |
+| `/health/orders` · `/health/inventory` | Proxy YARP vers le `/health` des APIs |
+| `/health/live` | Liveness probe — **process gateway seul** (jamais l'aval) |
+| `/health/ready` | Readiness probe — dépendances **propres** de la gateway (exclut l'aval) |
+| `/health` · `/health/upstream` | Agrégat santé de l'aval — dashboards/monitoring, **pas** les probes |
+
+> ⚠️ Les probes de la gateway sont volontairement **« shallow »** : elles ne dépendent
+> **pas** de la santé d'order-api/inventory-api. Sinon une panne aval ferait crashlooper
+> (liveness) et déréférencer (readiness) la gateway, propageant l'incident au lieu de le
+> contenir. YARP renvoie déjà 503 par route via son `HealthCheck` actif/passif par cluster.
 
 ### Order API
 

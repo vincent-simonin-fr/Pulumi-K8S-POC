@@ -26,12 +26,12 @@ spec:
       - envFrom:
         - configMapRef:
             name: gateway-config
-        image: localhost/ecommerce/gateway:1.0.0-7234f8b
+        image: localhost/ecommerce/gateway:1.0.0-e8c17ab
         imagePullPolicy: IfNotPresent
         livenessProbe:
           failureThreshold: 5
           httpGet:
-            path: /health
+            path: /health/live
             port: 8080
           initialDelaySeconds: 15
           periodSeconds: 15
@@ -42,7 +42,7 @@ spec:
         readinessProbe:
           failureThreshold: 5
           httpGet:
-            path: /health
+            path: /health/ready
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5

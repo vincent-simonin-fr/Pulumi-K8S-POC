@@ -102,9 +102,13 @@ public class GatewayResources : ComponentResource
                                     ["memory"] = args.MemoryLimit
                                 }
                             },
+                            // Probes "shallow" : indépendantes de la santé de l'aval.
+                            // /health/ready et /health/live n'incluent PAS les checks
+                            // "upstream" → une panne order-api/inventory-api ne fait ni
+                            // crashlooper ni scaler la gateway. (Voir Gateway/Program.cs.)
                             ReadinessProbe = new ProbeArgs
                             {
-                                HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
+                                HttpGet             = new HTTPGetActionArgs { Path = "/health/ready", Port = 8080 },
                                 InitialDelaySeconds = 5,
                                 PeriodSeconds       = 5,
                                 TimeoutSeconds      = 5,
@@ -112,7 +116,7 @@ public class GatewayResources : ComponentResource
                             },
                             LivenessProbe = new ProbeArgs
                             {
-                                HttpGet             = new HTTPGetActionArgs { Path = "/health", Port = 8080 },
+                                HttpGet             = new HTTPGetActionArgs { Path = "/health/live", Port = 8080 },
                                 InitialDelaySeconds = 15,
                                 PeriodSeconds       = 15,
                                 TimeoutSeconds      = 5,
