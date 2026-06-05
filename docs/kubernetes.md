@@ -72,49 +72,10 @@ kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
 Kind tire les images depuis internet au moment du déploiement. Les pré-charger évite les timeouts Helm et les erreurs `ImagePullBackOff`.
 
 ```bash
-# Init containers (psql) + messagerie + cache
-podman pull postgres:16-alpine
-podman pull rabbitmq:4.3.1-management-alpine
-podman pull redis:7-alpine
-kind load docker-image postgres:16-alpine                --name ecommerce
-kind load docker-image rabbitmq:4.3.1-management-alpine  --name ecommerce
-kind load docker-image redis:7-alpine                    --name ecommerce
-
-# CNPG (opérateur + PostgreSQL 16 bookworm) — images venant de ghcr.io
-# L'image bookworm (non alpine) est la seule officiellement supportée par CNPG.
-# L'opérateur tourne dans cnpg-system, PostgreSQL tourne dans ecommerce.
-podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0
-kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
-podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
-kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
-# PgBouncer — utilisé par les Poolers CNPG (version distincte de l'opérateur)
-podman pull ghcr.io/cloudnative-pg/pgbouncer:1.23.0
-kind load docker-image ghcr.io/cloudnative-pg/pgbouncer:1.23.0 --name ecommerce
-
-# KEDA (operator + metrics server + webhooks) — images venant de ghcr.io
-podman pull ghcr.io/kedacore/keda:2.17.0
-kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
-podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0
-kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
-podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0
-kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
-
-# Observabilité
-podman pull otel/opentelemetry-collector-contrib:0.153.0
-podman pull jaegertracing/all-in-one:1.76.0
-podman pull prom/prometheus:v3.11.3
-podman pull grafana/grafana:13.0.1-security-01
-podman pull prometheuscommunity/postgres-exporter:v0.16.0
-podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
-podman pull quay.io/prometheus/node-exporter:v1.9.1
-
-kind load docker-image otel/opentelemetry-collector-contrib:0.153.0      --name ecommerce
-kind load docker-image jaegertracing/all-in-one:1.76.0                   --name ecommerce
-kind load docker-image prom/prometheus:v3.11.3                           --name ecommerce
-kind load docker-image grafana/grafana:13.0.1-security-01                --name ecommerce
-kind load docker-image prometheuscommunity/postgres-exporter:v0.16.0     --name ecommerce
-kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 --name ecommerce
-kind load docker-image quay.io/prometheus/node-exporter:v1.9.1           --name ecommerce
+# Liste épinglée UNIQUE : build/Build.cs → PreloadImageList (infra, observabilité
+# kube-prometheus-stack, CNPG, KEDA, metrics-server, Vault + VSO). Source de vérité —
+# on évite de dupliquer/maintenir la liste de versions dans la doc.
+dotnet nuke PreloadImages
 ```
 
 > `dotnet nuke Launch` fait tout cela automatiquement (cluster + images + build + pulumi up).
@@ -387,33 +348,13 @@ kubectl config use-context kind-ecommerce
 ### Étape 4 — Recharger toutes les images
 
 ```bash
-# Init containers / messagerie / cache
-podman pull postgres:16-alpine && kind load docker-image postgres:16-alpine --name ecommerce
-podman pull rabbitmq:4.3.1-management-alpine && kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
-podman pull redis:7-alpine && kind load docker-image redis:7-alpine --name ecommerce
+# Liste épinglée UNIQUE : build/Build.cs → PreloadImageList (infra, observabilité
+# kube-prometheus-stack, CNPG, KEDA, metrics-server, Vault + VSO). Source de vérité —
+# pas de liste dupliquée dans la doc (évite la dérive de versions).
+dotnet nuke PreloadImages
 
-# CNPG
-podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 && kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
-podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm && kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
-
-# KEDA
-podman pull ghcr.io/kedacore/keda:2.17.0 && kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
-podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 && kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
-podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0 && kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
-
-# Services applicatifs (rebuild si code modifié)
-kind load docker-image localhost/ecommerce/order-api:dev     --name ecommerce
-kind load docker-image localhost/ecommerce/inventory-api:dev --name ecommerce
-kind load docker-image localhost/ecommerce/gateway:dev       --name ecommerce
-
-# Observabilité
-podman pull otel/opentelemetry-collector-contrib:0.153.0 && kind load docker-image otel/opentelemetry-collector-contrib:0.153.0 --name ecommerce
-podman pull jaegertracing/all-in-one:1.76.0 && kind load docker-image jaegertracing/all-in-one:1.76.0 --name ecommerce
-podman pull prom/prometheus:v3.11.3 && kind load docker-image prom/prometheus:v3.11.3 --name ecommerce
-podman pull grafana/grafana:13.0.1-security-01 && kind load docker-image grafana/grafana:13.0.1-security-01 --name ecommerce
-podman pull prometheuscommunity/postgres-exporter:v0.16.0 && kind load docker-image prometheuscommunity/postgres-exporter:v0.16.0 --name ecommerce
-podman pull registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 && kind load docker-image registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0 --name ecommerce
-podman pull quay.io/prometheus/node-exporter:v1.9.1 && kind load docker-image quay.io/prometheus/node-exporter:v1.9.1 --name ecommerce
+# Images applicatives (rebuild + load)
+dotnet nuke BuildImages
 ```
 
 > `dotnet nuke Launch` fait tout cela automatiquement depuis la racine du projet.

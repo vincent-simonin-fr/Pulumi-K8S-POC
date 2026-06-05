@@ -260,8 +260,8 @@ kubectl delete statefulset order-db inventory-db -n ecommerce
 kubectl delete pvc data-order-db-0 data-inventory-db-0 -n ecommerce
 
 # 2. Pré-charger les images CNPG dans Kind
-podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0
-kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.24.0 --name ecommerce
+podman pull ghcr.io/cloudnative-pg/cloudnative-pg:1.25.1
+kind load docker-image ghcr.io/cloudnative-pg/cloudnative-pg:1.25.1 --name ecommerce
 podman pull ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
 kind load docker-image ghcr.io/cloudnative-pg/postgresql:16.6-bookworm --name ecommerce
 

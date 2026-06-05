@@ -95,8 +95,38 @@ passent aux **creds PostgreSQL dynamiques** qu'une fois Vault **bootstrappé**
 (init/unseal + `pulumi config set --secret vault:rootToken …`). Tant que ce n'est pas
 fait, les apps **restent sur les secrets statiques** → aucun blocage au démarrage.
 
-- Activer le dynamique (optionnel) : voir [docs/vault.md](docs/vault.md).
 - Alléger le dev (pas de Vault du tout) : `vault:enabled=false` dans `Pulumi.dev.yaml`.
+
+#### Bootstrap Vault (init + unseal) — pour activer les creds dynamiques
+
+Vault démarre **scellé** sur chaque cluster neuf. Séquence (PowerShell, à refaire après chaque reset) :
+
+```powershell
+# 1. Init → écrit les clés dans vault-init.json (gitignoré, lié à CETTE instance Vault)
+kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > vault-init.json
+
+# 2. Unseal avec la clé du fichier
+$k = (Get-Content vault-init.json -Raw | ConvertFrom-Json).unseal_keys_b64[0]
+kubectl exec -n vault vault-0 -- vault operator unseal $k
+kubectl exec -n vault vault-0 -- vault status      # Sealed: false
+
+# 3. Activer les creds dynamiques : poser le root token → Job de config + VSO
+$t = (Get-Content vault-init.json -Raw | ConvertFrom-Json).root_token
+cd infra/Ecommerce.Infra
+pulumi config set --secret vault:rootToken $t
+pulumi up --yes
+```
+
+> ⚠️ `vault-init.json` + `vault:rootToken` sont liés à une instance Vault donnée → **caducs à chaque reset de cluster** : `rm vault-init.json` + `pulumi config rm vault:rootToken` avant de recommencer. Détails, re-init et prod : [docs/vault.md](docs/vault.md).
+
+> **Après un re-init de Vault** : les Secrets dynamiques existants gardent des creds
+> caducs (anciens *leases*) → les apps crashent en `28P01 password authentication failed`.
+> Forcer VSO à régénérer un lease frais, puis redémarrer les apps :
+> ```bash
+> kubectl delete secret order-db-dynamic inventory-db-dynamic -n ecommerce
+> kubectl rollout restart deploy/order-api deploy/inventory-api -n ecommerce
+> ```
+> (Le Job `vault-config-*` qui apparaît `0/1 Completed` est normal : un Job se termine, il ne reste pas Ready.)
 
 ---
 
@@ -113,15 +143,9 @@ kubectl config use-context kind-ecommerce
 ### 2. Pré-charger les images
 
 ```bash
-# Infra
-podman pull postgres:16-alpine && kind load docker-image postgres:16-alpine --name ecommerce
-podman pull rabbitmq:4.3.1-management-alpine && kind load docker-image rabbitmq:4.3.1-management-alpine --name ecommerce
-podman pull redis:7-alpine && kind load docker-image redis:7-alpine --name ecommerce
-
-# KEDA — pré-charger pour éviter le timeout du Helm install
-podman pull ghcr.io/kedacore/keda:2.17.0 && kind load docker-image ghcr.io/kedacore/keda:2.17.0 --name ecommerce
-podman pull ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 && kind load docker-image ghcr.io/kedacore/keda-metrics-apiserver:2.17.0 --name ecommerce
-podman pull ghcr.io/kedacore/keda-admission-webhooks:2.17.0 && kind load docker-image ghcr.io/kedacore/keda-admission-webhooks:2.17.0 --name ecommerce
+# Toutes les images infra/observabilité (kube-prometheus-stack)/CNPG/KEDA/
+# metrics-server/Vault+VSO — liste épinglée UNIQUE dans build/Build.cs (PreloadImageList) :
+dotnet nuke PreloadImages
 
 # Images applicatives
 podman build -t localhost/ecommerce/order-api:dev     -f docker/order-api/Dockerfile .
