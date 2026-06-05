@@ -72,6 +72,21 @@ kubectl port-forward -n ecommerce svc/order-db-pooler 5432:5432
 kubectl port-forward -n ecommerce svc/inventory-db-pooler 5433:5432
 ```
 
+### Vault (UI)
+
+```bash
+kubectl port-forward -n vault svc/vault 8200:8200
+# → http://localhost:8200  (login : root token, cf. vault-init.json — voir docs/vault.md)
+```
+
+### MinIO (console — navigation des backups)
+
+```bash
+kubectl port-forward -n minio svc/minio-console 9001:9001
+# → http://localhost:9001  (login : minio:rootUser / minio:rootPassword ; défaut dev minio / minio-dev-password)
+# Bucket cnpg-backups → order-db/ & inventory-db/ (base/ + wals/). Voir docs/backups.md.
+```
+
 ---
 
 ## Mots de passe & credentials

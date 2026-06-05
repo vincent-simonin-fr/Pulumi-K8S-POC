@@ -7,8 +7,11 @@ perte de données irréversible. C'est le manque le plus critique pour de la vra
 
 ## What Changes
 
-- Activer les **backups CNPG** (Barman) vers un **object storage** (S3/GCS/Azure) :
+- Activer les **backups CNPG** (Barman) vers un **object storage S3-compatible** :
   `spec.backup.barmanObjectStore` sur les Clusters `order-db` et `inventory-db`.
+- **Cible retenue : MinIO** (S3-compatible) — **auto-hébergé en dev** (valide le
+  mécanisme + le PITR **sans cloud**), **bucket cloud** (S3/GCS/Azure) en prod via le
+  même API (seuls endpoint + credentials changent).
 - Activer le **WAL archiving** continu → permet le **Point-In-Time-Recovery (PITR)**.
 - Ajouter une **`ScheduledBackup`** (base backup périodique, ex. quotidien) par cluster.
 - Définir la **rétention** (ex. 30 jours) et l'accès object storage par **identité de
@@ -35,6 +38,7 @@ perte de données irréversible. C'est le manque le plus critique pour de la vra
 
 ## Non-goals
 
-- Pas de backup en **dev** par défaut (pas d'object storage local).
+- Backups **activés en dev** via **MinIO local** (validation + PITR sans cloud) ;
+  prod = bucket cloud (`minio:enabled=false`, `cnpg:backupEndpoint` = endpoint cloud).
 - Ne couvre pas la sauvegarde de RabbitMQ / Redis (hors périmètre).
 - Pas de changement de comportement métier.

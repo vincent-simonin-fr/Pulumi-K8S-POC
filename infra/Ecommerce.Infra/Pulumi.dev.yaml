@@ -309,11 +309,8 @@ config:
   vault:vsoVersion: "1.4.0" # Vault Secrets Operator (livraison Vault → Secret K8s)
   # Bootstrap Vault : APRÈS init/unseal, poser le root token pour activer le Job de config :
 
-  vault:rootToken:
-    secure: v1:4RU6HZXvcPnm5ovV:jEaGbE5LAj47hDxFXbbiBSUc/R2mdi55MU5bBXKkgKd0eDO08JiqkawT8Pc=
+  #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
 
-#   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
+  # ⚠️ NE PAS committer : le rootToken (comme vault-init.json) est lié à UNE instance
 
-# ⚠️ NE PAS committer : le rootToken (comme vault-init.json) est lié à UNE instance
-
-#    Vault → caduc à chaque reset de cluster. Le poser localement après le bootstrap.
+  #    Vault → caduc à chaque reset de cluster. Le poser localement après le bootstrap.
