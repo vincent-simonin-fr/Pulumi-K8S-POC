@@ -61,13 +61,88 @@ kubectl get backup order-db-manual -n ecommerce -w   # → phase: completed
 ```
 Puis vérifier visuellement dans la console MinIO que les objets arrivent.
 
-### Restauration Point-In-Time (PITR)
+### Restauration Point-In-Time (PITR) — runbook testé
 
 La restauration CNPG crée un **nouveau Cluster** en mode `bootstrap.recovery` ciblant un
-backup + un instant (`recoveryTarget.targetTime`). Procédure : créer un Cluster
-`recovery` pointant l'`externalCluster` (même `barmanObjectStore` + `serverName`), à un
-timestamp **avant** l'incident. Voir la proposition `openspec/changes/cnpg-backups/`
-(tasks « Restauration ») pour la séquence détaillée + le test sur cluster jetable.
+base backup + un instant (`recoveryTarget.targetTime`), en rejouant les WAL archivés.
+On ne restaure **jamais in-place** : on monte un cluster de restauration, on vérifie,
+puis on bascule (ou on copie les données).
+
+**Scénario validé** : récupérer une table supprimée par erreur (`DROP TABLE`), en
+restaurant à l'instant **juste avant** l'incident.
+
+```bash
+# 1. (Pré-requis) un base backup existe + WAL archiving actif
+kubectl get backups -n ecommerce                                   # un backup 'completed'
+kubectl exec -n ecommerce order-db-1 -- psql -U postgres -tAc \
+  "SELECT archived_count, failed_count FROM pg_stat_archiver;"     # archived>0, failed=0
+
+# 2. Donnée témoin + capture de l'instant T (AVANT l'incident)
+kubectl exec -n ecommerce order-db-1 -- psql -U postgres -d order_db -tAc \
+  "CREATE TABLE pitr_test(id serial, note text); INSERT INTO pitr_test(note) VALUES('avant le DROP');"
+kubectl exec -n ecommerce order-db-1 -- psql -U postgres -tAc "SELECT now();"   # → noter T
+# Forcer l'archivage du segment WAL contenant T :
+kubectl exec -n ecommerce order-db-1 -- psql -U postgres -tAc "SELECT pg_switch_wal();"
+
+# 3. L'incident (APRÈS T)
+kubectl exec -n ecommerce order-db-1 -- psql -U postgres -d order_db -c "DROP TABLE pitr_test;"
+
+# 4. Cluster de restauration ciblant T (targetTime = T capturé à l'étape 2)
+kubectl apply -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: order-db-restore, namespace: ecommerce }
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.6-bookworm
+  storage: { size: 1Gi, storageClass: standard }
+  bootstrap:
+    recovery:
+      source: order-db
+      recoveryTarget:
+        targetTime: "2026-06-05 08:13:34+00"   # ← T
+  externalClusters:
+    - name: order-db
+      barmanObjectStore:
+        destinationPath: s3://cnpg-backups/
+        endpointURL: http://minio.minio.svc.cluster.local:9000
+        serverName: order-db
+        s3Credentials:
+          accessKeyId:     { name: cnpg-backup-creds, key: ACCESS_KEY_ID }
+          secretAccessKey: { name: cnpg-backup-creds, key: ACCESS_SECRET_KEY }
+YAML
+
+# 5. Attendre la fin de la restauration + vérifier
+kubectl wait --for=condition=Ready cluster/order-db-restore -n ecommerce --timeout=240s
+kubectl exec -n ecommerce order-db-restore-1 -- psql -U postgres -d order_db -tAc \
+  "SELECT * FROM pitr_test;"        # → la table est de retour (état à T, avant le DROP)
+
+# 6. Nettoyer (ou, en vrai DR : promouvoir / recopier les données vers le cluster cible)
+kubectl delete cluster order-db-restore -n ecommerce
+```
+
+> Points clés : `serverName` = nom du cluster d'origine (CNPG range les backups sous
+> `s3://cnpg-backups/<serverName>/`) ; `targetTime` doit être **couvert par les WAL
+> archivés** (d'où le `pg_switch_wal` à l'étape 2 pour forcer l'archivage du segment).
+
+## RPO & RTO
+
+Deux métriques qui définissent une stratégie de sauvegarde :
+
+| Métrique | Définition | Ce qui la détermine ici |
+|---|---|---|
+| **RPO** (Recovery Point Objective) | quantité de données qu'on accepte de **perdre** (fenêtre avant l'incident) | l'**archivage WAL continu** → RPO ≈ **quelques secondes** (au pire, le dernier segment WAL non encore archivé). Le base backup quotidien ne fixe **pas** le RPO : c'est le WAL qui permet de viser n'importe quel instant. |
+| **RTO** (Recovery Time Objective) | **temps** nécessaire pour restaurer le service | temps de restauration du base backup (depuis l'object storage) **+** rejeu des WAL jusqu'à `targetTime` **+** bascule applicative. Croît avec la **taille de la base** et le **volume de WAL** à rejouer depuis le dernier base backup. |
+
+**Leviers :**
+- **Réduire le RTO** : base backups **plus fréquents** (moins de WAL à rejouer), réseau
+  object storage rapide, base backup via **volume snapshots** (CNPG les supporte) pour
+  les grosses bases.
+- **Améliorer le RPO** : il est déjà quasi-temps-réel grâce au WAL ; en prod, surveiller
+  l'échec d'archivage (alerte `pg_stat_archiver.failed_count` — cf. `observability-alerting`).
+
+> ⚠️ Un backup **non testé** = fausse sécurité. Ce runbook PITR doit être **rejoué
+> périodiquement** (et le RTO mesuré) — pas seulement supposé fonctionner.
 
 ## Production
 
