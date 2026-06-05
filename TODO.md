@@ -12,13 +12,6 @@ tasks) — implémentable via `/opsx:apply <nom>`.
 
 ## 🟠 P1 — Important (sécurité & exploitabilité)
 
-- [ ] **Alerting** — `openspec/changes/observability-alerting/`
-      Dashboards présents mais **zéro alerte** : rien ne réveille en cas d'incident. Activer
-      Alertmanager + `PrometheusRule` (CrashLoop, CNPG primary down, RabbitMQ quorum, latence
-      p95, saturation pool PG, **échec de backup**) + récepteur (Slack/PagerDuty).
-      _Désormais le chantier le plus prioritaire : les backups existent (P0 livré) mais rien
-      n'alerte si un `ScheduledBackup` échoue ou si l'archivage WAL décroche._
-
 - [ ] **Durcissement des secrets statiques** — `openspec/changes/secrets-hardening/`
       `rabbitmq-credentials`, Grafana, mot de passe `app` restent lisibles via
       `kubectl get secret | base64 -d`. RBAC least-privilege + chiffrement at-rest (KMS) +
@@ -39,6 +32,11 @@ tasks) — implémentable via `/opsx:apply <nom>`.
 
 ## ✅ Déjà livré (pour mémoire)
 
+- **Alerting** — Alertmanager (chart) + 9 `PrometheusRule` (CrashLoop, CNPG no-primary /
+  injoignable / lag / **backup en échec**, RabbitMQ down, latence p95, saturation pool PG),
+  routage Slack par sévérité, seuils configurables (`alerting:*`), runbook + checklist
+  (`docs/observability.md`). PromQL calibré sur les métriques réelles. *(ex-P1 ; validé live :
+  `PodCrashLooping` pending→firing→Alertmanager, routage `critical` OK. Reste : webhook Slack réel en prod.)*
 - **Sauvegardes CNPG (DR)** — Barman + WAL archiving → **MinIO** (S3), `ScheduledBackup`
   quotidien, **PITR testé de bout en bout** (DROP TABLE récupéré à l'instant T), **RPO/RTO
   documentés** (`docs/backups.md`). _(ex-P0)_

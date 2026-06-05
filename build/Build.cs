@@ -188,6 +188,10 @@ partial class Build : NukeBuild
         "quay.io/prometheus-operator/prometheus-operator:v0.91.0",
         "quay.io/prometheus-operator/prometheus-config-reloader:v0.91.0",
         "quay.io/prometheus/node-exporter:v1.11.1-distroless",
+        // Alertmanager — déployé seulement si alerting:enabled=true (défaut prod), mais
+        // préchargé pour éviter un pull live lors de l'activation. Tag = défaut de
+        // l'operator v0.91.0.
+        "quay.io/prometheus/alertmanager:v0.28.1",
         "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.0",
         "quay.io/kiwigrid/k8s-sidecar:2.7.3",
         "grafana/grafana:13.0.1-security-01",

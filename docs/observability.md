@@ -5,6 +5,7 @@
 - [Architecture](#architecture)
 - [Acces aux UIs](#acces-aux-uis)
 - [Dashboards Grafana](#dashboards-grafana)
+- [Alerting (Alertmanager + PrometheusRule)](#alerting-alertmanager--prometheusrule)
 - [Jaeger — traces distribuees](#jaeger--traces-distribuees)
 - [Verification du pipeline](#verification-du-pipeline)
 - [Kubernetes Dashboard](#kubernetes-dashboard)
@@ -200,6 +201,91 @@ Métriques `cnpg_*` exposées par chaque instance Postgres (port 9187).
 Panels : nœuds up, messages ready/unacked, débit publish/deliver/ack, connexions &
 channels par nœud, mémoire/disque par nœud. Métriques `rabbitmq_*` du plugin natif
 (port 15692), scrapées sur les 3 nœuds via le ServiceMonitor rabbitmq.
+
+---
+
+## Alerting (Alertmanager + PrometheusRule)
+
+Les dashboards te permettent de **voir** ; l'alerting te **réveille**. Alertmanager est
+fourni par le chart kube-prometheus-stack, et les règles sont des `PrometheusRule`
+(CRD) découvertes par l'Operator (`AlertingResources.cs`).
+
+- **Dev** : `alerting:enabled=false` par défaut (pas d'Alertmanager, pas de notif).
+- **Prod** : `alerting:enabled=true` + webhook Slack (secret), routage par **sévérité**.
+
+### Activer / configurer
+
+```bash
+# Activer (dev, pour valider les règles localement — sans envoi externe)
+pulumi config set alerting:enabled true
+
+# Prod : récepteur Slack (SECRET, jamais committé)
+pulumi config set --secret alerting:slackWebhook https://hooks.slack.com/services/XXX/YYY/ZZZ
+pulumi config set alerting:slackChannel "#alerts"
+
+# Seuils ajustables sans recompiler
+pulumi config set alerting:p95LatencyMs 500    # latence p95
+pulumi config set alerting:pgPoolWarnPct 80    # saturation pool PG
+```
+
+Sans `slackWebhook`, Alertmanager tourne mais les récepteurs sont « null » : les alertes
+passent `firing` (visibles dans l'UI) mais **rien n'est envoyé dehors** — idéal pour valider.
+
+### Règles déployées
+
+| Alerte | Sévérité | Condition (résumé) | `for` |
+|---|---|---|---|
+| `PodCrashLooping` | critical | un conteneur `ecommerce` en `CrashLoopBackOff` | 5m |
+| `PodNotReady` | warning | un pod `ecommerce` non Ready | 15m |
+| `CNPGInstanceUnreachable` | critical | `cnpg_collector_up == 0` (instance injoignable) | 2m |
+| `CNPGNoPrimary` | critical | toutes les instances d'un cluster en recovery (pas de primary) | 2m |
+| `CNPGReplicationLag` | warning | lag de réplication > 30s | 5m |
+| `CNPGBackupFailing` | warning | dernier backup échoué plus récent que le dernier dispo | 15m |
+| `RabbitMQDown` | critical | aucun nœud RabbitMQ sain scrapé (nœud down / quorum perdu) | 2m |
+| `HighRequestLatencyP95` | warning | p95 d'un service > seuil (`p95LatencyMs`) | 10m |
+| `PostgresConnectionPoolSaturation` | warning | connexions > `pgPoolWarnPct`% de `max_connections` | 5m |
+
+> Routage : `severity=critical` et `severity=warning` partent vers le même canal Slack par
+> défaut ; en prod on peut router `critical → PagerDuty` (ajouter un récepteur + une route).
+
+### Accéder à Alertmanager
+
+```bash
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093
+# → http://localhost:9093   (alertes actives, silences, statut des récepteurs)
+```
+
+Les règles et leur état sont aussi dans Prometheus : http://localhost:9090/alerts.
+
+### Runbook — réponse aux alertes
+
+| Alerte | Première action |
+|---|---|
+| `PodCrashLooping` | `kubectl logs <pod> -n ecommerce --previous` ; vérifier creds dynamiques Vault (cf. `docs/vault.md`, 28P01) |
+| `CNPGNoPrimary` | `kubectl get cluster -n ecommerce` ; `kubectl cnpg status <cluster>` ; vérifier le failover |
+| `CNPGBackupFailing` | console MinIO + `kubectl get backups -n ecommerce` ; cf. `docs/backups.md` |
+| `RabbitMQDown` | `kubectl get pods -n ecommerce -l app=rabbitmq` ; en cluster, vérifier le quorum |
+| `HighRequestLatencyP95` | Jaeger (traces lentes) + dashboard Services ; vérifier DB/pool |
+| `PostgresConnectionPoolSaturation` | dashboard PostgreSQL ; vérifier le Pooler / fuites de connexions |
+
+### Valider une alerte (test)
+
+```bash
+# Provoquer un VRAI CrashLoopBackOff (conteneur qui démarre puis sort en erreur).
+# ⚠️ `set image <image-bidon>` donne un ImagePullBackOff — un reason DIFFÉRENT de
+#    CrashLoopBackOff → la règle PodCrashLooping ne matcherait PAS. Il faut un crash :
+kubectl patch deploy/order-api -n ecommerce --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/command","value":["/bin/sh","-c","exit 1"]}]'
+
+# Suivre la montée : pending (expr vraie) puis firing après le `for: 5m`
+kubectl get pods -n ecommerce -l app=order-api -w        # → CrashLoopBackOff en ~1-2 min
+# → http://localhost:9090/alerts        : PodCrashLooping pending → firing (~5 min)
+# → http://localhost:9093 (Alertmanager): l'alerte arrive ; notif Slack si webhook configuré
+
+# Rollback (retire le command override) :
+kubectl patch deploy/order-api -n ecommerce --type=json \
+  -p='[{"op":"remove","path":"/spec/template/spec/containers/0/command"}]'
+```
 
 ---
 

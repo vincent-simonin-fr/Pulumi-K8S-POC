@@ -78,6 +78,15 @@ config:
   observability:kpStackVersion: "86.1.0"   # chart kube-prometheus-stack
   # pulumi config set --secret observability:grafanaAdminPassword <password>
 
+  # ── Alerting (Alertmanager + PrometheusRule, routage par sévérité) ────────────
+  alerting:enabled: "true"
+  alerting:slackChannel: "#alerts"
+  alerting:p95LatencyMs: "500"    # prod plus strict qu'en dev
+  alerting:pgPoolWarnPct: "80"
+  # ⚠️ Webhook Slack = SECRET, jamais en clair ici :
+  #   pulumi config set --secret alerting:slackWebhook https://hooks.slack.com/services/XXX/YYY/ZZZ
+  # (sans webhook, Alertmanager tourne mais n'envoie rien — récepteurs « null »).
+
   # ── HPA — order-api + gateway (inventory-api = KEDA, voir plus bas) ───────────
   # ⚠️ PAS de hpa:inventoryApi* : inventory-api est scalé par KEDA (queue RabbitMQ),
   #    pas par HPA CPU. Mettre une clé hpa:inventoryApi serait ignorée.

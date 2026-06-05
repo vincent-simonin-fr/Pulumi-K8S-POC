@@ -29,6 +29,7 @@ public class EcommerceStack : Stack
         var gitopsCfg        = new Config("gitops");
         var rabbitmqCfg      = new Config("rabbitmq");
         var vaultCfg         = new Config("vault");
+        var alertingCfg      = new Config("alerting");
 
         var nodePort        = gatewayCfg.GetInt32("nodePort")     ?? 30080;
         var grafanaNodePort = obsCfg.GetInt32("grafanaNodePort")  ?? 30030;
@@ -119,16 +120,23 @@ public class EcommerceStack : Stack
             IngressEnabled       = ingressEnabled
         });
 
+        // ── Alerting (Alertmanager + PrometheusRule) ───────────────────────────
+        // Off en dev (pas de récepteur externe) ; on en prod avec webhook Slack (secret).
+        var alertingEnabled = alertingCfg.GetBoolean("enabled") ?? false;
+
         // ── Métriques : kube-prometheus-stack (Operator + Grafana + exporters) ─
         // DependsOn observability : namespace monitoring + Jaeger (datasource Grafana).
         var kpStack = new KubePrometheusStackResources("kube-prometheus-stack", new KubePrometheusStackResourcesArgs
         {
-            Namespace            = "monitoring",
-            Version              = obsCfg.Get("kpStackVersion") ?? "86.1.0",
-            GrafanaNodePort      = grafanaNodePort,
-            IngressEnabled       = ingressEnabled,
-            GrafanaAdminPassword = obsCfg.Get("grafanaAdminPassword") ?? "",
-            JaegerUrl            = "http://jaeger.monitoring.svc.cluster.local:16686"
+            Namespace                = "monitoring",
+            Version                  = obsCfg.Get("kpStackVersion") ?? "86.1.0",
+            GrafanaNodePort          = grafanaNodePort,
+            IngressEnabled           = ingressEnabled,
+            GrafanaAdminPassword     = obsCfg.Get("grafanaAdminPassword") ?? "",
+            JaegerUrl                = "http://jaeger.monitoring.svc.cluster.local:16686",
+            AlertingEnabled          = alertingEnabled,
+            AlertmanagerSlackWebhook = alertingCfg.Get("slackWebhook") ?? "",
+            AlertmanagerSlackChannel = alertingCfg.Get("slackChannel") ?? "#alerts"
         }, new ComponentResourceOptions { DependsOn = { observability } });
 
         // ServiceMonitors : scrape déclaratif découvert par l'Operator (DependsOn le
@@ -144,6 +152,17 @@ public class EcommerceStack : Stack
         {
             Namespace = "monitoring"
         }, new ComponentResourceOptions { DependsOn = { kpStack } });
+
+        // PrometheusRule : règles d'alerte (infra + applicatif). Déployées seulement quand
+        // l'alerting est actif (dev off par défaut). DependsOn le chart pour que la CRD
+        // PrometheusRule existe avant le kubectl apply.
+        if (alertingEnabled)
+            _ = new AlertingResources("alerting", new AlertingResourcesArgs
+            {
+                MonitoringNamespace = "monitoring",
+                P95LatencyMs        = alertingCfg.GetInt32("p95LatencyMs")  ?? 1000,
+                PgPoolWarnPct       = alertingCfg.GetInt32("pgPoolWarnPct") ?? 80
+            }, new ComponentResourceOptions { DependsOn = { kpStack } });
 
         // ── Namespace ─────────────────────────────────────────────────────────
         var ns = new Namespace("ecommerce-ns", new NamespaceArgs

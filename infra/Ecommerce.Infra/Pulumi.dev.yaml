@@ -98,6 +98,13 @@ config:
   observability:otelVersion: "0.153.0"
   observability:jaegerVersion: "1.76.0"
   observability:kpStackVersion: "86.1.0" # version du chart kube-prometheus-stack
+  # ── Alerting (Alertmanager + PrometheusRule) ────────────────────────────
+  # Off en dev : pas de récepteur externe. Passer à "true" pour VALIDER les règles
+  # localement (Alertmanager tourne, sans webhook → ne notifie rien dehors).
+  alerting:enabled: "true"
+  # Seuils (utilisés seulement si alerting:enabled=true) :
+  alerting:p95LatencyMs: "1000" # alerte si latence p95 > 1s pendant 10 min
+  alerting:pgPoolWarnPct: "80" # alerte si connexions > 80% de max_connections
   # ── Mode presale (flash sale, promo, événement) ─────────────────────────
 
   # Quand activé, les HPA sont forcés au minReplicas presale AVANT le pic.
@@ -307,7 +314,6 @@ config:
   vault:storageSize: "1Gi"
   vault:vsoVersion: "1.4.0" # Vault Secrets Operator (livraison Vault → Secret K8s)
   # Bootstrap Vault : APRÈS init/unseal, poser le root token pour activer le Job de config :
-
 
   #   pulumi config set --secret vault:rootToken <root_token>   (puis pulumi up)
 

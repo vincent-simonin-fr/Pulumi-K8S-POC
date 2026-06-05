@@ -102,6 +102,11 @@ pulumi config set --secret ingress:monitoringBasicAuthHtpasswd "admin:\$apr1\$xy
 
 # ── Grafana (login natif, auth anonyme désactivée en prod) ───────────────────
 pulumi config set --secret observability:grafanaAdminPassword "<password>"
+
+# ── Alerting (Alertmanager → Slack) ──────────────────────────────────────────
+# alerting:enabled=true est déjà posé dans Pulumi.prod.yaml ; fournir le webhook (SECRET) :
+pulumi config set --secret alerting:slackWebhook "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+# (sans webhook, Alertmanager tourne mais n'envoie rien. Règles + runbook : docs/observability.md.)
 ```
 
 > **Vérification** : après ces commandes, `Pulumi.prod.yaml` doit contenir des valeurs

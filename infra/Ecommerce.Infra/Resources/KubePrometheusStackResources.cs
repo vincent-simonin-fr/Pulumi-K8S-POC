@@ -22,6 +22,22 @@ public class KubePrometheusStackResourcesArgs
 
     /// <summary>Endpoint Jaeger (datasource tracing ajoutée à Grafana).</summary>
     public string JaegerUrl { get; set; } = "http://jaeger.monitoring.svc.cluster.local:16686";
+
+    /// <summary>
+    /// Active Alertmanager + le routage des alertes par sévérité. False (dev par défaut) =
+    /// Alertmanager désactivé, aucune notification (les PrometheusRule restent visibles dans
+    /// l'UI Prometheus si elles sont déployées).
+    /// </summary>
+    public bool AlertingEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Webhook Slack (secret) pour les notifications. Vide → récepteurs « null » : Alertmanager
+    /// tourne mais n'envoie rien vers l'extérieur (dev / validation locale).
+    /// </summary>
+    public string AlertmanagerSlackWebhook { get; set; } = "";
+
+    /// <summary>Canal Slack cible des notifications.</summary>
+    public string AlertmanagerSlackChannel { get; set; } = "#alerts";
 }
 
 /// <summary>
@@ -147,8 +163,9 @@ public class KubePrometheusStackResources : ComponentResource
                 // ── Grafana (fourni par le chart) ─────────────────────────────
                 ["grafana"] = grafanaValues,
 
-                // ── Alertmanager : désactivé (pas d'alerting configuré en dev) ─
-                ["alertmanager"] = new Dictionary<string, object> { ["enabled"] = false },
+                // ── Alertmanager : activé en prod (récepteur Slack), off en dev ─
+                // Voir BuildAlertmanagerValues : routage par sévérité (critical/warning).
+                ["alertmanager"] = BuildAlertmanagerValues(args),
 
                 // ── node-exporter + kube-state-metrics : inclus, activés ───────
                 // (remplacent les versions manuelles d'ObservabilityResources).
@@ -167,5 +184,67 @@ public class KubePrometheusStackResources : ComponentResource
         }, baseOpts);
 
         RegisterOutputs();
+    }
+
+    /// <summary>
+    /// Construit les values Helm de la section <c>alertmanager</c>.
+    ///   - Alerting OFF (dev)  : <c>{ enabled: false }</c> — aucun Alertmanager, aucune notif.
+    ///   - Alerting ON         : Alertmanager + config routée par <c>severity</c>
+    ///                           (critical / warning → récepteur Slack).
+    ///   - Sans webhook Slack  : récepteurs « null » (Alertmanager tourne, n'envoie rien
+    ///                           dehors) → permet de valider les alertes en local sans fuite.
+    ///
+    /// Le webhook provient d'un secret Pulumi (jamais committé en clair) ; il n'apparaît que
+    /// dans le Secret Alertmanager in-cluster, comme tout récepteur.
+    /// </summary>
+    private static Dictionary<string, object> BuildAlertmanagerValues(KubePrometheusStackResourcesArgs args)
+    {
+        if (!args.AlertingEnabled)
+            return new Dictionary<string, object> { ["enabled"] = false };
+
+        var criticalReceiver = new Dictionary<string, object> { ["name"] = "critical" };
+        var warningReceiver  = new Dictionary<string, object> { ["name"] = "warning" };
+
+        if (!string.IsNullOrEmpty(args.AlertmanagerSlackWebhook))
+        {
+            Dictionary<string, object> Slack() => new()
+            {
+                ["api_url"]       = args.AlertmanagerSlackWebhook,
+                ["channel"]       = args.AlertmanagerSlackChannel,
+                ["send_resolved"] = true,
+                ["title"]         = "[{{ .CommonLabels.severity | toUpper }}] {{ .CommonLabels.alertname }}",
+                ["text"]          = "{{ range .Alerts }}*{{ .Annotations.summary }}*\n{{ .Annotations.description }}\n{{ end }}"
+            };
+            criticalReceiver["slack_configs"] = new List<Dictionary<string, object>> { Slack() };
+            warningReceiver["slack_configs"]  = new List<Dictionary<string, object>> { Slack() };
+        }
+
+        return new Dictionary<string, object>
+        {
+            ["enabled"] = true,
+            ["config"]  = new Dictionary<string, object>
+            {
+                ["global"] = new Dictionary<string, object> { ["resolve_timeout"] = "5m" },
+                ["route"]  = new Dictionary<string, object>
+                {
+                    ["group_by"]        = new List<string> { "alertname", "namespace" },
+                    ["group_wait"]      = "30s",
+                    ["group_interval"]  = "5m",
+                    ["repeat_interval"] = "4h",
+                    ["receiver"]        = "default",
+                    ["routes"] = new List<Dictionary<string, object>>
+                    {
+                        new() { ["matchers"] = new List<string> { "severity = \"critical\"" }, ["receiver"] = "critical" },
+                        new() { ["matchers"] = new List<string> { "severity = \"warning\"" },  ["receiver"] = "warning"  }
+                    }
+                },
+                ["receivers"] = new List<Dictionary<string, object>>
+                {
+                    new() { ["name"] = "default" },   // catch-all silencieux (alertes sans severity routée)
+                    criticalReceiver,
+                    warningReceiver
+                }
+            }
+        };
     }
 }

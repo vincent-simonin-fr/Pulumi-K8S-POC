@@ -6,24 +6,24 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 
 ## Sommaire
 
-| Documentation | Contenu |
-|---|---|
-| **Ce fichier** | Prérequis, démarrage rapide |
-| [Architecture](docs/architecture.md) | Diagramme, flux métier, structure projet, endpoints, configuration |
-| [Kubernetes & Déploiement](docs/kubernetes.md) | Cluster Kind, build images, `pulumi up`, reset, arrêt/redémarrage, Metrics Server |
-| [Infrastructure Pulumi](docs/infrastructure.md) | Code Pulumi, secrets, HPA, KEDA, Redis, StatefulSet PostgreSQL, presale, ressources CPU/RAM |
-| [Déploiement en production](docs/production.md) | Stack prod, secrets, Ingress, DNS, Let's Encrypt, opérations |
-| [Observabilité](docs/observability.md) | OTel Collector, Jaeger, Prometheus, Grafana, 4 dashboards |
-| [Debugging](docs/debugging.md) | VS 2022 + Pulumi, `kubectl` diagnostics, problèmes courants |
-| [Dev local & Tests](docs/dev-local.md) | `podman-compose`, tests d'intégration, migrations EF Core, OpenAPI, observabilité |
-| [k9s](docs/k9s.md) | Interface terminal Kubernetes — logs, shell, describe sans Dashboard |
-| [Tests de charge](docs/load-testing.md) | k6 — scénarios baseline/load/stress/spike, intégration Prometheus |
+| Documentation                                           | Contenu                                                                                        |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Ce fichier**                                          | Prérequis, démarrage rapide                                                                    |
+| [Architecture](docs/architecture.md)                    | Diagramme, flux métier, structure projet, endpoints, configuration                             |
+| [Kubernetes & Déploiement](docs/kubernetes.md)          | Cluster Kind, build images, `pulumi up`, reset, arrêt/redémarrage, Metrics Server              |
+| [Infrastructure Pulumi](docs/infrastructure.md)         | Code Pulumi, secrets, HPA, KEDA, Redis, StatefulSet PostgreSQL, presale, ressources CPU/RAM    |
+| [Déploiement en production](docs/production.md)         | Stack prod, secrets, Ingress, DNS, Let's Encrypt, opérations                                   |
+| [Observabilité](docs/observability.md)                  | OTel Collector, Jaeger, Prometheus, Grafana, 4 dashboards                                      |
+| [Debugging](docs/debugging.md)                          | VS 2022 + Pulumi, `kubectl` diagnostics, problèmes courants                                    |
+| [Dev local & Tests](docs/dev-local.md)                  | `podman-compose`, tests d'intégration, migrations EF Core, OpenAPI, observabilité              |
+| [k9s](docs/k9s.md)                                      | Interface terminal Kubernetes — logs, shell, describe sans Dashboard                           |
+| [Tests de charge](docs/load-testing.md)                 | k6 — scénarios baseline/load/stress/spike, intégration Prometheus                              |
 | [Accès (mots de passe & port-forwards)](docs/access.md) | NodePorts, port-forwards, récupération des credentials (Grafana, ArgoCD, RabbitMQ, PostgreSQL) |
-| [Argo CD / GitOps](docs/argocd.md) | Déploiement GitOps des apps, credential dépôt privé, RBAC, SSO |
-| [Versioning des images](docs/versioning.md) | Tags SemVer + SHA par service, `dotnet nuke BuildImages`, redéploiement ciblé |
-| [Test HA multi-nœuds](docs/ha-testing.md) | Kind multi-nœuds, anti-affinité, failover CNPG/RabbitMQ, drain de nœud |
-| [Vault — secrets dynamiques](docs/vault.md) | HashiCorp Vault + VSO, creds PostgreSQL dynamiques, bootstrap init/unseal, re-init |
-| [Sauvegardes & MinIO](docs/backups.md) | Backups CNPG (Barman) + WAL, MinIO (S3) + console, ScheduledBackup, PITR |
+| [Argo CD / GitOps](docs/argocd.md)                      | Déploiement GitOps des apps, credential dépôt privé, RBAC, SSO                                 |
+| [Versioning des images](docs/versioning.md)             | Tags SemVer + SHA par service, `dotnet nuke BuildImages`, redéploiement ciblé                  |
+| [Test HA multi-nœuds](docs/ha-testing.md)               | Kind multi-nœuds, anti-affinité, failover CNPG/RabbitMQ, drain de nœud                         |
+| [Vault — secrets dynamiques](docs/vault.md)             | HashiCorp Vault + VSO, creds PostgreSQL dynamiques, bootstrap init/unseal, re-init             |
+| [Sauvegardes & MinIO](docs/backups.md)                  | Backups CNPG (Barman) + WAL, MinIO (S3) + console, ScheduledBackup, PITR                       |
 
 ---
 
@@ -49,25 +49,25 @@ Voir [Architecture](docs/architecture.md) pour les détails.
 
 ### Scaling
 
-| Service | Mécanisme | Signal |
-|---|---|---|
-| order-api | HPA natif | CPU > 70% |
-| inventory-api | **KEDA** | Queue RabbitMQ depth (réaction ~5s) |
-| gateway | HPA natif | CPU > 70% |
+| Service       | Mécanisme | Signal                              |
+| ------------- | --------- | ----------------------------------- |
+| order-api     | HPA natif | CPU > 70%                           |
+| inventory-api | **KEDA**  | Queue RabbitMQ depth (réaction ~5s) |
+| gateway       | HPA natif | CPU > 70%                           |
 
 ---
 
 ## Prérequis
 
-| Outil | Version | Rôle |
-|---|---|---|
-| [Podman Desktop](https://podman-desktop.io) | 1.10+ | Moteur de containers |
-| [Kind](https://kind.sigs.k8s.io) | 0.23+ | Kubernetes local |
-| [kubectl](https://kubernetes.io/docs/tasks/tools/) | 1.29+ | CLI Kubernetes |
-| [Helm](https://helm.sh/docs/intro/install/) | 3.x | Gestionnaire de packages K8s (KEDA) |
-| [Pulumi CLI](https://www.pulumi.com/docs/install/) | 3.x | Infrastructure as Code |
-| [.NET SDK](https://dotnet.microsoft.com) | 10.0 | Build applicatif et Pulumi C# |
-| [k6](https://k6.io/docs/get-started/installation/) | 0.50+ | Tests de charge (optionnel) |
+| Outil                                              | Version | Rôle                                |
+| -------------------------------------------------- | ------- | ----------------------------------- |
+| [Podman Desktop](https://podman-desktop.io)        | 1.10+   | Moteur de containers                |
+| [Kind](https://kind.sigs.k8s.io)                   | 0.23+   | Kubernetes local                    |
+| [kubectl](https://kubernetes.io/docs/tasks/tools/) | 1.29+   | CLI Kubernetes                      |
+| [Helm](https://helm.sh/docs/intro/install/)        | 3.x     | Gestionnaire de packages K8s (KEDA) |
+| [Pulumi CLI](https://www.pulumi.com/docs/install/) | 3.x     | Infrastructure as Code              |
+| [.NET SDK](https://dotnet.microsoft.com)           | 10.0    | Build applicatif et Pulumi C#       |
+| [k6](https://k6.io/docs/get-started/installation/) | 0.50+   | Tests de charge (optionnel)         |
 
 > **Windows** : définir `KIND_EXPERIMENTAL_PROVIDER=podman` (variable d'environnement permanente) avant toute commande `kind`.
 
@@ -121,12 +121,14 @@ pulumi up --yes
 > ⚠️ `vault-init.json` + `vault:rootToken` sont liés à une instance Vault donnée → **caducs à chaque reset de cluster** : `rm vault-init.json` + `pulumi config rm vault:rootToken` avant de recommencer. Détails, re-init et prod : [docs/vault.md](docs/vault.md).
 
 > **Après un re-init de Vault** : les Secrets dynamiques existants gardent des creds
-> caducs (anciens *leases*) → les apps crashent en `28P01 password authentication failed`.
+> caducs (anciens _leases_) → les apps crashent en `28P01 password authentication failed`.
 > Forcer VSO à régénérer un lease frais, puis redémarrer les apps :
+>
 > ```bash
 > kubectl delete secret order-db-dynamic inventory-db-dynamic -n ecommerce
 > kubectl rollout restart deploy/order-api deploy/inventory-api -n ecommerce
 > ```
+>
 > (Le Job `vault-config-*` qui apparaît `0/1 Completed` est normal : un Job se termine, il ne reste pas Ready.)
 
 ---
@@ -179,6 +181,7 @@ curl http://localhost:30080/health/inventory   # inventory-api
 ```
 
 **Accès** :
+
 - Gateway : `http://localhost:30080`
 - Grafana : `http://localhost:30030`
 - Jaeger : `http://localhost:30686`
@@ -208,14 +211,14 @@ redéploie que celui-ci. Détails : [docs/versioning.md](docs/versioning.md).
 Argo CD clone le dépôt distant : pour un dépôt **privé**, il faut lui fournir un
 credential, sinon l'Application reste en `ComparisonError: authentication required`.
 
-```powershell
-$pat = "ghp_xxxxxxxxxxxx"          # PAT GitHub (scope repo)
-kubectl create secret generic repo-pulumi-k8s-poc -n argocd `
-  --from-literal=type=git `
-  --from-literal=url=https://github.com/<user>/<repo>.git `
-  --from-literal=username=<user> `
-  --from-literal=password=$pat
-kubectl label secret repo-pulumi-k8s-poc -n argocd `
+```bash
+kubectl create secret generic repo-pulumi-k8s-poc -n argocd \
+  --from-literal=type=git \
+  --from-literal=url=https://github.com/vincent-simonin-fr/Pulumi-K8S-POC.git \
+  --from-literal=username=vincent-simonin-fr \
+  --from-literal=password=ghp_xxxxxxxxxxxx
+
+kubectl label secret repo-pulumi-k8s-poc -n argocd \
   argocd.argoproj.io/secret-type=repository
 ```
 
