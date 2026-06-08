@@ -187,9 +187,14 @@ config:
 
   # ── Config interne de Vault : déclarative via pulumi-vault (Option B) ──────────
   vault:configMode: "provider"
-  # Vault doit être JOIGNABLE depuis l'hôte Pulumi (Ingress/TLS recommandé) :
+  # Vault doit être JOIGNABLE depuis l'hôte Pulumi (Ingress/TLS — créé par IngressResources) :
   vault:providerAddress: "https://vault.wizzz.com"
-  # Token d'admin Vault (SECRET, court-vécu de préférence : AppRole/identité de charge) :
+  # AUTH du provider vers Vault — PRÉFÉRER AppRole (token court-vécu scopé) au root token.
+  # Bootstrap AppRole (une fois, avec le root, puis révoquer le root) : cf. docs/vault.md.
+  #   pulumi config set --secret vault:approleRoleId   <role_id>
+  #   pulumi config set --secret vault:approleSecretId <secret_id>   # régénéré par run CI idéalement
+  # (Repli : vault:rootToken — déconseillé en prod.) Si AppRole ET rootToken sont posés,
+  #  l'AppRole est prioritaire.
   #   pulumi config set --secret vault:rootToken <token-admin-vault>
   # Compte admin PostgreSQL du DB engine (SECRET ; en prod, PAS de pg_hba trust) :
   #   pulumi config set vault:dbAdminUser <user> ; pulumi config set --secret vault:dbAdminPassword <pw>

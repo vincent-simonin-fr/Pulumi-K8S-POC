@@ -172,6 +172,50 @@ pulumi up --yes
 > Filet de secours : `pulumi config set vault:configMode job` (Job in-cluster, n'a pas besoin
 > que Vault soit joignable depuis l'hôte). Config **identique** dans les deux modes.
 
+### Auth du provider : AppRole (cible prod) vs root token (dev)
+
+Le provider s'authentifie auprès de Vault de deux façons (l'**AppRole est prioritaire** si
+les deux sont fournis) :
+
+- **Dev** : `vault:rootToken` (root token de l'init) — simple, accepté localement.
+- **Prod** : **AppRole** = token **court-vécu** et **scopé** (least-privilege), au lieu du root
+  tout-puissant et éternel. Réduit le rayon d'explosion si la creds CI fuite.
+
+**Bootstrap AppRole** (une seule fois, avec le root, puis on révoque le root) :
+
+```bash
+vault auth enable approle
+
+# Policy de config : SEULEMENT les chemins que le provider gère (pas la lecture des secrets)
+vault policy write vault-config-admin - <<'EOF'
+path "sys/mounts/*"        { capabilities = ["create","read","update","delete"] }
+path "database/*"          { capabilities = ["create","read","update","delete"] }
+path "sys/auth/*"          { capabilities = ["create","read","update"] }
+path "auth/kubernetes/*"   { capabilities = ["create","read","update"] }
+path "sys/policies/acl/*"  { capabilities = ["create","read","update"] }
+EOF
+
+# AppRole lié à la policy, token court (20 min, max 1 h)
+vault write auth/approle/role/pulumi token_policies=vault-config-admin token_ttl=20m token_max_ttl=1h
+vault read  auth/approle/role/pulumi/role-id                 # → role_id
+vault write -f auth/approle/role/pulumi/secret-id            # → secret_id (jetable)
+```
+
+```bash
+# Fournir RoleId/SecretId au provider (au lieu du root), puis appliquer
+pulumi config set --secret vault:approleRoleId   <role_id>
+pulumi config set --secret vault:approleSecretId <secret_id>
+pulumi config rm vault:rootToken          # le root n'est plus utilisé par Pulumi
+pulumi up --yes
+
+# Durcir : révoquer le root token de bootstrap
+kubectl exec -n vault vault-0 -- vault token revoke <root_token>
+```
+
+> Le `secret_id` est idéalement **régénéré par run CI** (court-vécu / response-wrapping) plutôt
+> que stocké durablement. Au quotidien, le provider se logge via AppRole → obtient un token qui
+> **expire** automatiquement.
+
 ## Production
 
 | Aspect | Dev (Kind) | Prod |

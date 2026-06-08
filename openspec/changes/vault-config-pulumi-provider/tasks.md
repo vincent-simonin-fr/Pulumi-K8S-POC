@@ -6,7 +6,7 @@
 
 ## 2. Authentification du provider vers Vault
 
-- [~] 2.1 Source du token d'admin : `vault:rootToken` (secret) câblé ; **AppRole/identité court-vécu = recommandation prod** (à brancher selon plateforme)
+- [x] 2.1 Auth du provider : **AppRole** (token court-vécu scopé, prioritaire) via `vault:approleRoleId`/`approleSecretId` (`AuthLogin` method=approle) ; repli `vault:rootToken`. Bootstrap AppRole + policy documenté (`docs/vault.md`)
 - [x] 2.2 Configurer le provider `Pulumi.Vault` (adresse + token) depuis la config/secret (`Vault.Provider`)
 - [~] 2.3 Skip explicite si `providerAddress`/token absent (pas de config → apps sur secrets statiques) ; si Vault injoignable, `pulumi up` échoue (erreur provider)
 

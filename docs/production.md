@@ -109,10 +109,12 @@ pulumi config set --secret alerting:slackWebhook "https://hooks.slack.com/servic
 # (sans webhook, Alertmanager tourne mais n'envoie rien. Règles + runbook : docs/observability.md.)
 
 # ── Vault (config déclarative + DB engine) ───────────────────────────────────
-# Token d'admin pour le provider pulumi-vault + compte admin PostgreSQL du DB engine.
-# Détails et bootstrap : section « Vault » ci-dessous.
-pulumi config set --secret vault:rootToken      "<token-admin-vault>"
-pulumi config set --secret vault:dbAdminPassword "<password-admin-postgres>"
+# Auth du provider pulumi-vault — PRÉFÉRER AppRole (token court-vécu scopé) au root.
+# Bootstrap de l'AppRole : section « Vault » ci-dessous + docs/vault.md.
+pulumi config set --secret vault:approleRoleId    "<role_id>"
+pulumi config set --secret vault:approleSecretId  "<secret_id>"
+# (repli déconseillé : vault:rootToken). Compte admin PostgreSQL du DB engine :
+pulumi config set --secret vault:dbAdminPassword  "<password-admin-postgres>"
 ```
 
 > **Vérification** : après ces commandes, `Pulumi.prod.yaml` doit contenir des valeurs
@@ -185,14 +187,19 @@ kubectl exec -n vault vault-0 -- vault status        # Sealed: false
 kubectl exec -n vault vault-0 -- vault operator init \
   -recovery-shares=5 -recovery-threshold=3 -format=json > vault-init-prod.json
 
-# 3. Fournir un token d'admin Vault (AppRole court-vécu de préférence ; le root de
-#    bootstrap convient le temps de la config). Le provider pulumi-vault configure
-#    alors Vault DEPUIS L'HÔTE via vault:providerAddress (https://vault.{domain}).
-pulumi config set --secret vault:rootToken "<token>"
+# 3. Créer un AppRole scopé (avec le root, une fois) pour que le provider s'authentifie
+#    par token COURT-VÉCU au lieu du root. Détail de la policy : docs/vault.md.
+kubectl exec -n vault vault-0 -- vault auth enable approle
+#    ... (policy vault-config-admin + role 'pulumi') ...
+pulumi config set --secret vault:approleRoleId   "<role_id>"
+pulumi config set --secret vault:approleSecretId "<secret_id>"
+
+# 4. Le provider pulumi-vault configure Vault DEPUIS L'HÔTE via vault:providerAddress
+#    (https://vault.{domain}) en s'authentifiant par AppRole.
 pulumi up --stack prod        # provider → DB engine, rôles, auth k8s, policies + VSO
 
-# 4. Durcir : révoquer le token de bootstrap une fois la config appliquée.
-kubectl exec -n vault vault-0 -- vault token revoke <token>
+# 5. Durcir : révoquer le root token de bootstrap (le provider utilise l'AppRole).
+kubectl exec -n vault vault-0 -- vault token revoke <root_token>
 ```
 
 Une fois bootstrappé, order-api / inventory-api basculent **automatiquement** sur les

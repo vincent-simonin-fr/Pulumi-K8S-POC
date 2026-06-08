@@ -104,18 +104,26 @@ public class EcommerceStack : Stack
             // "job" (filet de secours : Job in-cluster). Mutuellement exclusifs. Cf. docs/vault.md.
             var configMode   = vaultCfg.Get("configMode") ?? "provider";
             var rootTokenSet = !string.IsNullOrEmpty(vaultCfg.Get("rootToken"));
+            // AppRole (cible prod) : token court-vécu scopé au lieu du root. Si les deux sont
+            // fournis, le provider s'authentifie par AppRole (prioritaire sur le token statique).
+            var appRoleSet   = !string.IsNullOrEmpty(vaultCfg.Get("approleRoleId"))
+                            && !string.IsNullOrEmpty(vaultCfg.Get("approleSecretId"));
 
             if (configMode == "provider")
             {
                 // Option B — provider pulumi-vault (cible prod). Requiert un Vault JOIGNABLE
-                // depuis l'hôte Pulumi (Ingress/port-forward) + un token d'admin.
+                // depuis l'hôte Pulumi (Ingress/NodePort) + une auth (AppRole ou root token).
                 var providerAddress = vaultCfg.Get("providerAddress") ?? "";
-                if (rootTokenSet && !string.IsNullOrEmpty(providerAddress))
+                if ((rootTokenSet || appRoleSet) && !string.IsNullOrEmpty(providerAddress))
                 {
                     vaultConfigDone = new VaultDeclarativeConfigResources("vault-declarative-config", new VaultDeclarativeConfigResourcesArgs
                     {
                         VaultAddress    = providerAddress,
-                        AdminToken      = vaultCfg.GetSecret("rootToken") ?? (Input<string>)"",
+                        AdminToken      = rootTokenSet ? (Input<string>)vaultCfg.GetSecret("rootToken")!      : null,
+                        AppRoleRoleId   = appRoleSet   ? (Input<string>)vaultCfg.GetSecret("approleRoleId")!   : null,
+                        AppRoleSecretId = appRoleSet   ? (Input<string>)vaultCfg.GetSecret("approleSecretId")! : null,
+                        // Version serveur fournie au provider (contourne le bug 7.10, cf. classe).
+                        ServerVersion   = vaultCfg.Get("serverVersion") ?? "1.21.2",
                         DbAdminUser     = vaultCfg.Get("dbAdminUser")     ?? "postgres",
                         DbAdminPassword = vaultCfg.GetSecret("dbAdminPassword") ?? (Input<string>)"ignored-by-trust"
                     }, new ComponentResourceOptions { DependsOn = { vault } });

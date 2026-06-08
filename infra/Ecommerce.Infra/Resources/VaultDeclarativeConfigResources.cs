@@ -12,11 +12,32 @@ public class VaultDeclarativeConfigResourcesArgs
     /// </summary>
     public required string VaultAddress { get; set; }
 
-    /// <summary>Token d'admin Vault (secret). Jamais committé. Idéalement court-vécu (AppRole) en prod.</summary>
-    public required Input<string> AdminToken { get; set; }
+    /// <summary>
+    /// Token d'admin Vault (secret). Utilisé si AppRole non fourni. Dev : root token.
+    /// ⚠️ Prod : préférer l'AppRole (token court-vécu scopé) — cf. AppRoleRoleId/SecretId.
+    /// </summary>
+    public Input<string>? AdminToken { get; set; }
+
+    /// <summary>
+    /// AppRole RoleId (secret). Si RoleId + SecretId sont fournis, le provider s'authentifie
+    /// par AppRole (token court-vécu, scopé à la policy de config) au lieu du token statique.
+    /// Cible PROD. Cf. docs/vault.md (bootstrap AppRole).
+    /// </summary>
+    public Input<string>? AppRoleRoleId { get; set; }
+
+    /// <summary>AppRole SecretId (secret), idéalement régénéré par run CI.</summary>
+    public Input<string>? AppRoleSecretId { get; set; }
 
     /// <summary>API server Kubernetes (utilisé par l'auth method kubernetes côté Vault).</summary>
     public string KubernetesHost { get; set; } = "https://kubernetes.default.svc:443";
+
+    /// <summary>
+    /// Version du SERVEUR Vault, fournie explicitement au provider (VaultVersionOverride).
+    /// ⚠️ Contourne un bug du provider pulumi-vault 7.10 : sans version, le Diff de
+    /// kubernetes_auth_backend_config panique (nil pointer dans go-version). Défaut = Vault
+    /// 1.21.2 (chart hashicorp/vault 0.32.0). Configurable via vault:serverVersion.
+    /// </summary>
+    public string ServerVersion { get; set; } = "1.21.2";
 
     /// <summary>Compte admin PostgreSQL utilisé par le DB engine. Dev : postgres (pg_hba trust).</summary>
     public Input<string> DbAdminUser { get; set; } = "postgres";
@@ -58,11 +79,44 @@ public class VaultDeclarativeConfigResources : ComponentResource
         : base("ecommerce:infra:VaultDeclarativeConfigResources", name, opts)
     {
         // Provider explicite : toutes les ressources Vault ci-dessous ciblent CE Vault.
-        var provider = new Vault.Provider("vault-provider", new Vault.ProviderArgs
+        // Auth : AppRole (token court-vécu scopé, cible PROD) si RoleId+SecretId fournis,
+        // sinon token statique (root en dev). Voir docs/vault.md.
+        //
+        // VaultVersionOverride + SkipGetVaultVersion : on FOURNIT la version du serveur au
+        // lieu de la laisser détecter. Contourne un bug pulumi-vault 7.10 où le Diff de
+        // kubernetes_auth_backend_config panique (version nil → nil pointer dans go-version).
+        // ⚠️ DETTE TECHNIQUE (suivie dans TODO.md) : ce n'est pas un défaut de policy (le token
+        //    LIT bien la version via sys/seal-status) mais un bug interne du provider. 7.10.0 est
+        //    la dernière STABLE (7.11 = alpha seulement). À revisiter quand 7.11 sera stable :
+        //    si le bug est corrigé, retirer VaultVersionOverride/SkipGetVaultVersion (l'épinglage
+        //    explicite de version reste toutefois une pratique IaC légitime si on préfère le garder).
+        var providerArgs = new Vault.ProviderArgs
         {
-            Address = args.VaultAddress,
-            Token   = args.AdminToken
-        }, new CustomResourceOptions { Parent = this });
+            Address              = args.VaultAddress,
+            VaultVersionOverride = args.ServerVersion,
+            SkipGetVaultVersion  = true
+        };
+
+        if (args.AppRoleRoleId != null && args.AppRoleSecretId != null)
+        {
+            providerArgs.AuthLogin = new Vault.Inputs.ProviderAuthLoginArgs
+            {
+                Path       = "auth/approle/login",
+                Method     = "approle",
+                Parameters = new InputMap<string>
+                {
+                    ["role_id"]   = args.AppRoleRoleId,
+                    ["secret_id"] = args.AppRoleSecretId
+                }
+            };
+        }
+        else
+        {
+            providerArgs.Token = args.AdminToken ?? (Input<string>)"";
+        }
+
+        var provider = new Vault.Provider("vault-provider", providerArgs,
+            new CustomResourceOptions { Parent = this });
 
         var vaultOpts = new CustomResourceOptions { Parent = this, Provider = provider };
 
