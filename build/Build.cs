@@ -141,7 +141,7 @@ partial class Build : NukeBuild
             Serilog.Log.Information(" Grafana    -> http://localhost:30030");
             Serilog.Log.Information(" Jaeger     -> http://localhost:30686");
             Serilog.Log.Information(" Argo CD    -> http://localhost:8080  (kubectl port-forward -n argocd svc/argocd-server 8080:80)");
-            Serilog.Log.Information(" Vault      -> http://localhost:8200  (kubectl port-forward -n vault svc/vault 8200:8200)");
+            Serilog.Log.Information(" Vault      -> http://localhost:30820 (NodePort)");
             Serilog.Log.Information(" MinIO      -> http://localhost:9001  (kubectl port-forward -n minio svc/minio-console 9001:9001)");
             Serilog.Log.Information(" Prometheus -> http://localhost:9090  (kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090)");
             Serilog.Log.Information(" RabbitMQ   -> http://localhost:15672 (kubectl port-forward -n ecommerce svc/rabbitmq 15672:15672)");

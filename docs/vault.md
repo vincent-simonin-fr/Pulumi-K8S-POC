@@ -13,19 +13,22 @@ SA vault-auth ─(auth Kubernetes)─► Vault ─(database engine)─► user P
 
 | Composant | Rôle |
 |---|---|
-| `VaultResources` | Serveur Vault (chart `hashicorp/vault`). Dev : standalone + storage fichier. Prod : HA Raft + auto-unseal KMS. |
+| `VaultResources` | Serveur Vault (chart `hashicorp/vault`). Dev : standalone + storage fichier, exposé en **NodePort 30820**. Prod : HA Raft + auto-unseal KMS, exposé via Ingress. |
 | `VaultSecretsOperatorResources` | Vault Secrets Operator (chart `vault-secrets-operator`). |
-| `VaultConfigResources` | **Option A** : Job in-cluster qui configure Vault (DB engine, rôle dynamique, auth k8s, policy). Gardé par `vault:rootToken`. |
+| `VaultDeclarativeConfigResources` | **Défaut (dev + prod)** : config Vault (DB engine, rôles dynamiques, auth k8s, policies) en ressources `pulumi-vault` déclaratives/diffables. Actif si `vault:configMode=provider`. |
+| `VaultConfigResources` | **Filet de secours** : même config par un Job in-cluster (impératif). Actif si `vault:configMode=job`. |
 | `VaultSecretsResources` | CRDs VSO (`VaultConnection`/`VaultAuth`/`VaultDynamicSecret`) → Secret `order-db-dynamic`. |
 
-> **Prod** : la configuration de Vault par le provider déclaratif `pulumi-vault`
-> (Option B) est décrite dans la proposition OpenSpec `vault-config-pulumi-provider`.
+> **Aiguillage** `vault:configMode` : **`provider` par défaut (dev ET prod)** pour que le dev
+> reflète la prod ; `job` reste un filet de secours. Les deux voies sont **mutuellement
+> exclusives** et produisent la **même** config (mêmes rôles `order-app`/`inventory-app`, même
+> SQL, mêmes TTL 1h/24h, mêmes policies). Détails : [Config déclarative](#config-déclarative-option-b--provider-pulumi-vault).
 
 ## Bootstrap dev (Kind)
 
 Vault démarre **scellé** et **non configuré** : il faut un init/unseal manuel (pas de
-KMS en local), puis fournir le token pour activer le Job de config. C'est un cycle en
-deux `pulumi up`.
+KMS en local), puis fournir le token pour que **le provider `pulumi-vault` configure Vault**
+(depuis l'hôte, via le NodePort `localhost:30820`). C'est un cycle en deux `pulumi up`.
 
 ### 1. Déployer le serveur + VSO
 
@@ -47,7 +50,7 @@ kubectl exec -n vault vault-0 -- vault operator unseal <UNSEAL_KEY>
 kubectl exec -n vault vault-0 -- vault status          # Sealed: false → vault-0 1/1
 ```
 
-### 3. Fournir le root token → activer le Job de config
+### 3. Fournir le root token → le provider configure Vault
 
 ```bash
 cd infra/Ecommerce.Infra
@@ -55,9 +58,13 @@ pulumi config set --secret vault:rootToken <ROOT_TOKEN>   # depuis vault-init.js
 pulumi up --yes
 ```
 
-Au second `up`, Pulumi crée le ClusterRoleBinding `vault-auth-delegator`, le Secret
-`vault-root-token`, la ConfigMap du script, le **Job de config** (configure Vault) et
-les **CRDs VSO**.
+Au second `up`, le **provider `pulumi-vault`** se connecte à `localhost:30820` (NodePort)
+avec le token et déclare l'**auth Kubernetes**, le **database secrets engine** (order-db /
+inventory-db), les **rôles dynamiques** + **policies** ; puis les **CRDs VSO** sont créées.
+
+> Le token est requis **uniquement à la configuration** (pas à l'exécution des apps : elles
+> s'authentifient ensuite par ServiceAccount). En filet de secours, `vault:configMode=job`
+> reproduit la même config via un Job in-cluster (token dans un Secret K8s au lieu de l'hôte).
 
 ### 4. Vérifier
 
@@ -122,11 +129,48 @@ pulumi up --yes        # reconfigure Vault + re-sync VSO
 
 ## Sécurité
 
-- ⚠️ En **dev**, le root token vit dans un Secret K8s + l'état Pulumi (chiffré). C'est
-  l'anti-pattern accepté localement ; en **prod**, l'auto-unseal KMS supprime les clés
-  manuelles et la config passe par `pulumi-vault` (Option B) avec un token scellé/scopé.
+- ⚠️ Le root token sert **uniquement à la configuration** (provider) ; en dev il vit dans
+  l'état Pulumi (chiffré). En **prod**, l'auto-unseal KMS supprime les clés manuelles et on
+  fournit un token **scellé/scopé** (AppRole court-vécu) plutôt que le root.
 - Ne jamais committer `vault-init.json` (gitignoré) ni coller un token en clair.
 - Prod : `vault:haEnabled=true` (HA Raft) + `vault:sealConfig` (KMS) — voir `Pulumi.prod.yaml`.
+
+## Config déclarative (Option B — provider `pulumi-vault`) — **mode par défaut**
+
+`VaultDeclarativeConfigResources` décrit la config interne de Vault en **ressources Pulumi**
+(idempotentes, diffables au `pulumi up`) : mount `database`, connexions CNPG (`order-db`/
+`inventory-db`), rôles dynamiques, auth Kubernetes, policies + rôles k8s. C'est le **chemin
+par défaut en dev ET en prod** (pour que le dev reflète la prod).
+
+**Contrainte clé** : le provider `pulumi-vault` s'exécute sur l'**hôte Pulumi** → Vault doit
+être **joignable depuis l'hôte** (≠ DNS in-cluster). D'où :
+- **dev** : Vault exposé en **NodePort** (`vault:nodePort=30820` → `http://localhost:30820`),
+  configuré automatiquement, **sans port-forward** ;
+- **prod** : Vault derrière **Ingress + TLS** (`https://vault.{domain}`).
+
+Si Vault est scellé/injoignable, `pulumi up` échoue (token requis + serveur descellé).
+
+```bash
+# Déjà câblé dans Pulumi.dev.yaml / Pulumi.prod.yaml :
+#   dev  : configMode=provider, nodePort=30820, providerAddress=http://localhost:30820
+#   prod : configMode=provider, providerAddress=https://vault.{domain} (Ingress)
+
+# Token d'admin Vault (SECRET, jamais committé ; AppRole court-vécu de préférence en prod)
+pulumi config set --secret vault:rootToken <token>
+
+# Prod uniquement : compte admin PostgreSQL du DB engine (pas de pg_hba trust en prod)
+pulumi config set vault:dbAdminUser <user>
+pulumi config set --secret vault:dbAdminPassword <pw>
+
+pulumi up --yes
+```
+
+> **Dérive d'état au re-init** : après un re-init de Vault (nouvelle instance) sans reset
+> complet du stack, lancer `pulumi up --refresh` pour que Pulumi recrée les objets Vault
+> (l'état les croit présents). Un reset complet (`destroy`/`stack rm`) évite ce cas.
+>
+> Filet de secours : `pulumi config set vault:configMode job` (Job in-cluster, n'a pas besoin
+> que Vault soit joignable depuis l'hôte). Config **identique** dans les deux modes.
 
 ## Production
 
@@ -134,5 +178,7 @@ pulumi up --yes        # reconfigure Vault + re-sync VSO
 |---|---|---|
 | Topologie | standalone + file | HA Raft 3 nœuds |
 | Unseal | Shamir manuel | auto-unseal KMS |
-| Config Vault | Job in-cluster (Option A) | provider `pulumi-vault` (Option B) |
+| Config Vault | provider `pulumi-vault` (NodePort) | provider `pulumi-vault` (Ingress/TLS) |
+| Exposition Vault | NodePort `localhost:30820` | Ingress `https://vault.{domain}` |
+| Token provider | root (dev) | AppRole court-vécu |
 | Stockage | local-path | réseau (gp3…) |

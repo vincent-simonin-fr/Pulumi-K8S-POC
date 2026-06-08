@@ -72,12 +72,16 @@ kubectl port-forward -n ecommerce svc/order-db-pooler 5432:5432
 kubectl port-forward -n ecommerce svc/inventory-db-pooler 5433:5432
 ```
 
-### Vault (UI)
+### Vault (UI / API)
+
+En dev, Vault est exposé en **NodePort** (`vault:nodePort=30820`) → accès direct **sans
+port-forward** (c'est aussi l'adresse qu'utilise le provider `pulumi-vault`) :
 
 ```bash
-kubectl port-forward -n vault svc/vault 8200:8200
-# → http://localhost:8200  (login : root token, cf. vault-init.json — voir docs/vault.md)
+# → http://localhost:30820  (login : root token, cf. vault-init.json — voir docs/vault.md)
 ```
+
+> En prod, Vault passe par l'Ingress (`vault:providerAddress=https://vault.{domain}`), pas le NodePort.
 
 ### MinIO (console — navigation des backups)
 

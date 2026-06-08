@@ -377,3 +377,22 @@ kubectl get pods -n keda
 kubectl get pods -n monitoring
 curl http://localhost:30080/health
 ```
+
+### Étape 7 — Re-bootstrapper Vault (si `vault:enabled=true`)
+
+Le nouveau cluster a une **nouvelle instance Vault** → l'ancien `vault-init.json` et
+l'ancien `vault:rootToken` (restauré avec `Pulumi.dev.yaml.bak`) sont **caducs**. Les nettoyer,
+puis refaire le bootstrap (init/unseal + token → le provider `pulumi-vault` configure Vault) :
+
+```bash
+rm vault-init.json                              # PowerShell : Remove-Item vault-init.json
+cd infra/Ecommerce.Infra
+pulumi config rm vault:rootToken                # retire le token caduc
+
+# puis init/unseal/set token comme dans le README (Bootstrap Vault) :
+#   vault operator init … > vault-init.json ; vault operator unseal … ;
+#   pulumi config set --secret vault:rootToken <token> ; pulumi up --yes
+```
+
+> Vault est configuré en mode **provider** (défaut) → le serveur est joignable depuis l'hôte
+> sur `http://localhost:30820` (NodePort). Détails : [docs/vault.md](vault.md).

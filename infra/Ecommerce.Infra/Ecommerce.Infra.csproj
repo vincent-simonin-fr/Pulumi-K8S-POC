@@ -11,6 +11,10 @@
          via kubectl, contournant le cache de discovery GVK du provider Kubernetes
          qui ne se rafraîchit pas après l'installation des CRDs par le Helm KEDA. -->
     <PackageReference Include="Pulumi.Command" Version="0.*" />
+    <!-- Pulumi.Vault : configuration déclarative de Vault (auth k8s, DB engine, rôles,
+         policies) en mode provider (cible prod). Cf. VaultDeclarativeConfigResources.
+         Utilisé uniquement quand vault:configMode=provider ; sinon le Job dev (Option A). -->
+    <PackageReference Include="Pulumi.Vault" Version="7.10.*" />
   </ItemGroup>
 
   <!-- Sécurité : Pulumi.Kubernetes tire OpenTelemetry 1.9.0 (vulnérable).

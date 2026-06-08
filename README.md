@@ -100,9 +100,18 @@ fait, les apps **restent sur les secrets statiques** → aucun blocage au démar
 
 #### Bootstrap Vault (init + unseal) — pour activer les creds dynamiques
 
-Vault démarre **scellé** sur chaque cluster neuf. Séquence (PowerShell, à refaire après chaque reset) :
+> **Configuration de Vault = provider déclaratif `pulumi-vault`** (`vault:configMode=provider`,
+> défaut dev **et** prod) : Pulumi configure Vault (auth k8s + DB engine + rôles + policies)
+> **depuis l'hôte**. En dev, Vault est donc exposé en **NodePort** (`localhost:30820`) →
+> pas de port-forward. (`configMode=job` reste un filet de secours.) Voir [docs/vault.md](docs/vault.md).
+
+Le setup se fait en **deux `pulumi up`** : le 1ᵉʳ déploie le serveur Vault (scellé), puis on
+l'initialise/desselle et on fournit le token, et le 2ᵉ le configure. Séquence (PowerShell,
+à refaire après chaque reset) :
 
 ```powershell
+# (Le 1er `pulumi up` / `dotnet nuke Launch` a déjà déployé le serveur Vault, scellé.)
+
 # 1. Init → écrit les clés dans vault-init.json (gitignoré, lié à CETTE instance Vault)
 kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json > vault-init.json
 
@@ -111,7 +120,7 @@ $k = (Get-Content vault-init.json -Raw | ConvertFrom-Json).unseal_keys_b64[0]
 kubectl exec -n vault vault-0 -- vault operator unseal $k
 kubectl exec -n vault vault-0 -- vault status      # Sealed: false
 
-# 3. Activer les creds dynamiques : poser le root token → Job de config + VSO
+# 3. Poser le root token → le provider pulumi-vault configure Vault (via localhost:30820) + VSO
 $t = (Get-Content vault-init.json -Raw | ConvertFrom-Json).root_token
 cd infra/Ecommerce.Infra
 pulumi config set --secret vault:rootToken $t
@@ -120,16 +129,23 @@ pulumi up --yes
 
 > ⚠️ `vault-init.json` + `vault:rootToken` sont liés à une instance Vault donnée → **caducs à chaque reset de cluster** : `rm vault-init.json` + `pulumi config rm vault:rootToken` avant de recommencer. Détails, re-init et prod : [docs/vault.md](docs/vault.md).
 
-> **Après un re-init de Vault** : les Secrets dynamiques existants gardent des creds
-> caducs (anciens _leases_) → les apps crashent en `28P01 password authentication failed`.
-> Forcer VSO à régénérer un lease frais, puis redémarrer les apps :
+> **Après un arrêt/redémarrage complet du cluster** (`podman stop`, reboot PC…) : Vault
+> redémarre **scellé** (pas d'auto-unseal en dev) → il faut le **redesceller** (étape 2
+> ci-dessus, SANS refaire l'init), sinon order-api/inventory-api crashent en `28P01`.
+>
+> **Après un re-init de Vault OU si les creds restent caducs après unseal** : les Secrets
+> dynamiques gardent d'anciens _leases_ → forcer VSO à régénérer un lease frais, puis
+> redémarrer les apps :
 >
 > ```bash
 > kubectl delete secret order-db-dynamic inventory-db-dynamic -n ecommerce
-> kubectl rollout restart deploy/order-api deploy/inventory-api -n ecommerce
+> kubectl rollout restart deploy/order-api deploy/inventory-api deploy/gateway -n ecommerce
 > ```
 >
-> (Le Job `vault-config-*` qui apparaît `0/1 Completed` est normal : un Job se termine, il ne reste pas Ready.)
+> **Mode provider — dérive d'état** : après un **re-init** de Vault (nouvelle instance) sans
+> reset complet du stack, l'état Pulumi croit encore les objets Vault présents alors que le
+> nouveau Vault est vide. Lancer `pulumi up --refresh` (Pulumi détecte l'absence et recrée
+> auth/DB engine/rôles/policies). Un reset **complet** (`pulumi destroy`/`stack rm`) évite ce cas.
 
 ---
 

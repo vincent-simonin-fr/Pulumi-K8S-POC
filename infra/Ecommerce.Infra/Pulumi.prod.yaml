@@ -185,6 +185,15 @@ config:
   # Exemple AWS — poser en --secret si tu préfères ne pas committer l'ARN :
   #   pulumi config set vault:sealConfig 'seal "awskms" { region = "eu-west-1" kms_key_id = "arn:aws:kms:eu-west-1:123:key/abc" }'
 
+  # ── Config interne de Vault : déclarative via pulumi-vault (Option B) ──────────
+  vault:configMode: "provider"
+  # Vault doit être JOIGNABLE depuis l'hôte Pulumi (Ingress/TLS recommandé) :
+  vault:providerAddress: "https://vault.wizzz.com"
+  # Token d'admin Vault (SECRET, court-vécu de préférence : AppRole/identité de charge) :
+  #   pulumi config set --secret vault:rootToken <token-admin-vault>
+  # Compte admin PostgreSQL du DB engine (SECRET ; en prod, PAS de pg_hba trust) :
+  #   pulumi config set vault:dbAdminUser <user> ; pulumi config set --secret vault:dbAdminPassword <pw>
+
   # ╔══════════════════════════════════════════════════════════════════════════╗
   # ║  HA — état des composants                                                  ║
   # ║                                                                            ║

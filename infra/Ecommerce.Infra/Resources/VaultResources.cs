@@ -32,6 +32,13 @@ public class VaultResourcesArgs
     /// Configurable via vault:sealConfig (poser en --secret si la clé est sensible).
     /// </summary>
     public string SealConfig { get; set; } = "";
+
+    /// <summary>
+    /// NodePort d'exposition de Vault (dev) → permet de joindre Vault DEPUIS L'HÔTE
+    /// (requis par le provider pulumi-vault, configMode=provider). 0 = ClusterIP
+    /// (prod : exposition via Ingress+TLS, pas de NodePort). Configurable via vault:nodePort.
+    /// </summary>
+    public int NodePort { get; set; } = 0;
 }
 
 /// <summary>
@@ -164,15 +171,29 @@ public class VaultResources : ComponentResource
                 ["server"]   = serverValues,
                 // VSO (Phase 3) livre les secrets, pas l'Agent Injector.
                 ["injector"] = new Dictionary<string, object> { ["enabled"] = false },
-                // UI activée, accès via port-forward en dev (pas de NodePort/Ingress ici).
-                ["ui"] = new Dictionary<string, object>
-                {
-                    ["enabled"]     = true,
-                    ["serviceType"] = "ClusterIP"
-                }
+                // UI + API. En dev (NodePort > 0) : exposé sur l'hôte (localhost:NodePort)
+                // → le provider pulumi-vault (configMode=provider) configure Vault depuis
+                // l'hôte sans port-forward. En prod (NodePort = 0) : ClusterIP + Ingress.
+                ["ui"] = BuildUiValues(args.NodePort)
             }
         }, baseOpts);
 
         RegisterOutputs();
+    }
+
+    /// <summary>
+    /// Service de l'UI/API Vault. NodePort > 0 (dev) → exposé sur l'hôte (le service
+    /// vault-ui route vers le pod actif sur 8200) ; 0 (prod) → ClusterIP (Ingress devant).
+    /// </summary>
+    private static Dictionary<string, object> BuildUiValues(int nodePort)
+    {
+        var ui = new Dictionary<string, object>
+        {
+            ["enabled"]     = true,
+            ["serviceType"] = nodePort > 0 ? "NodePort" : "ClusterIP"
+        };
+        if (nodePort > 0)
+            ui["serviceNodePort"] = nodePort;
+        return ui;
     }
 }

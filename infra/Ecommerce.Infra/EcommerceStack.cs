@@ -74,7 +74,9 @@ public class EcommerceStack : Stack
         // Dev : standalone + storage fichier. Prod : HA Raft + auto-unseal KMS.
         // Capturés ici pour brancher les CRDs VSO APRÈS la création du namespace ecommerce.
         VaultSecretsOperatorResources? vso = null;
-        VaultConfigResources? vaultConfig = null;
+        // Marqueur « config Vault appliquée » : soit le Job in-cluster (dev, Option A),
+        // soit la config déclarative pulumi-vault (prod, Option B). VaultSecrets en dépend.
+        Resource? vaultConfigDone = null;
 
         if (vaultCfg.GetBoolean("enabled") ?? false)
         {
@@ -85,7 +87,9 @@ public class EcommerceStack : Stack
                 HaReplicas   = vaultCfg.GetInt32("haReplicas")     ?? 3,
                 StorageClass = vaultCfg.Get("storageClass")        ?? "standard",
                 StorageSize  = vaultCfg.Get("storageSize")         ?? "1Gi",
-                SealConfig   = vaultCfg.Get("sealConfig")          ?? ""
+                SealConfig   = vaultCfg.Get("sealConfig")          ?? "",
+                // Dev : NodePort pour joindre Vault depuis l'hôte (provider). Prod : 0 (Ingress).
+                NodePort     = vaultCfg.GetInt32("nodePort")       ?? 0
             });
 
             // Vault Secrets Operator (livraison Vault → Secret K8s). DependsOn le
@@ -95,16 +99,41 @@ public class EcommerceStack : Stack
                 Version = vaultCfg.Get("vsoVersion") ?? "1.4.0"
             }, new ComponentResourceOptions { DependsOn = { vault } });
 
-            // Config Vault (Option A : Job in-cluster). Créée UNIQUEMENT si vault:rootToken
-            // est renseigné → bootstrap : up (serveur) → init/unseal → config set --secret
-            // vault:rootToken → up (ce Job configure Vault). Cf. docs/vault.md.
-            if (!string.IsNullOrEmpty(vaultCfg.Get("rootToken")))
+            // Aiguillage de la configuration interne de Vault (auth k8s + DB engine + rôles
+            // + policies) : "provider" (défaut, déclaratif pulumi-vault — dev ET prod) ou
+            // "job" (filet de secours : Job in-cluster). Mutuellement exclusifs. Cf. docs/vault.md.
+            var configMode   = vaultCfg.Get("configMode") ?? "provider";
+            var rootTokenSet = !string.IsNullOrEmpty(vaultCfg.Get("rootToken"));
+
+            if (configMode == "provider")
             {
-                vaultConfig = new VaultConfigResources("vault-config", new VaultConfigResourcesArgs
+                // Option B — provider pulumi-vault (cible prod). Requiert un Vault JOIGNABLE
+                // depuis l'hôte Pulumi (Ingress/port-forward) + un token d'admin.
+                var providerAddress = vaultCfg.Get("providerAddress") ?? "";
+                if (rootTokenSet && !string.IsNullOrEmpty(providerAddress))
                 {
-                    RootToken     = vaultCfg.GetSecret("rootToken") ?? (Input<string>)"",
-                    VaultImageTag = "1.21.2"
-                }, new ComponentResourceOptions { DependsOn = { vault } });
+                    vaultConfigDone = new VaultDeclarativeConfigResources("vault-declarative-config", new VaultDeclarativeConfigResourcesArgs
+                    {
+                        VaultAddress    = providerAddress,
+                        AdminToken      = vaultCfg.GetSecret("rootToken") ?? (Input<string>)"",
+                        DbAdminUser     = vaultCfg.Get("dbAdminUser")     ?? "postgres",
+                        DbAdminPassword = vaultCfg.GetSecret("dbAdminPassword") ?? (Input<string>)"ignored-by-trust"
+                    }, new ComponentResourceOptions { DependsOn = { vault } });
+                }
+            }
+            else
+            {
+                // Option A — Job in-cluster (dev, défaut). Créé UNIQUEMENT si vault:rootToken
+                // est renseigné → bootstrap : up (serveur) → init/unseal → config set --secret
+                // vault:rootToken → up (ce Job configure Vault).
+                if (rootTokenSet)
+                {
+                    vaultConfigDone = new VaultConfigResources("vault-config", new VaultConfigResourcesArgs
+                    {
+                        RootToken     = vaultCfg.GetSecret("rootToken") ?? (Input<string>)"",
+                        VaultImageTag = "1.21.2"
+                    }, new ComponentResourceOptions { DependsOn = { vault } });
+                }
             }
         }
 
@@ -179,12 +208,12 @@ public class EcommerceStack : Stack
         // Phase 3e : order-api consomme des creds PostgreSQL DYNAMIQUES (Vault/VSO)
         // au lieu du secret statique. Opt-in (order-api dépendra alors du bootstrap Vault).
         VaultSecretsResources? vaultSecrets = null;
-        if (vso != null && vaultConfig != null)
+        if (vso != null && vaultConfigDone != null)
         {
             vaultSecrets = new VaultSecretsResources("vault-secrets", new VaultSecretsResourcesArgs
             {
                 Namespace = "ecommerce"
-            }, new ComponentResourceOptions { DependsOn = { vso, vaultConfig, ns } });
+            }, new ComponentResourceOptions { DependsOn = { vso, vaultConfigDone, ns } });
         }
 
         // Dès que le pipeline VSO existe (Vault activé + bootstrappé), order-api et
@@ -536,7 +565,7 @@ public class EcommerceStack : Stack
 
         // Accès par PORT-FORWARD (pas de NodePort/ingress) — mêmes commandes prod/dev.
         VaultUrl        = Output.Create((vaultCfg.GetBoolean("enabled") ?? false)
-            ? "http://localhost:8200 (kubectl port-forward -n vault svc/vault 8200:8200) — login = root token"
+            ? "http://localhost:30820 (NodePort) — login = root token (cf. vault-init.json)"
             : "(vault disabled)");
         MinioConsoleUrl = Output.Create(minioEnabled
             ? "http://localhost:9001 (kubectl port-forward -n minio svc/minio-console 9001:9001) — login = minio:rootUser/rootPassword"

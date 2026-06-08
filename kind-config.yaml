@@ -12,3 +12,7 @@ nodes:
   - containerPort: 30686
     hostPort: 30686
     protocol: TCP
+  # Vault (UI/API) — exposé en dev pour le provider pulumi-vault (configMode=provider)
+  - containerPort: 30820
+    hostPort: 30820
+    protocol: TCP

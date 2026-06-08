@@ -24,14 +24,15 @@ tasks) — implémentable via `/opsx:apply <nom>`.
       pod parle à tout pod. PDB `minAvailable` + default-deny + flux ciblés (CNI réel requis).
       _PDB = quick win ; NetworkPolicies = à valider sous Calico/Cilium (no-op sur kindnet)._
 
-- [ ] **Config Vault déclarative (cible prod)** — `openspec/changes/vault-config-pulumi-provider/`
-      Remplacer le Job de bootstrap in-cluster (Option A, dev) par le provider `pulumi-vault`
-      (Option B) : auth k8s + DB engine + rôles + policies déclaratifs, idempotents, diffables.
-
 ---
 
 ## ✅ Déjà livré (pour mémoire)
 
+- **Config Vault déclarative (Option B) — généralisée dev + prod** — `VaultDeclarativeConfigResources.cs`
+  (provider `pulumi-vault` 7.10) : auth k8s + DB engine + rôles dynamiques + policies déclaratifs.
+  **`configMode=provider` par défaut partout** (dev = Vault en **NodePort 30820** joignable depuis
+  l'hôte ; prod = Ingress) ; `job` = filet de secours. Docs à jour (README, vault.md, access.md,
+  kubernetes.md). *(ex-P2 ; reste : validation live `pulumi up` mode provider + Ingress/AppRole prod.)*
 - **Alerting** — Alertmanager (chart) + 9 `PrometheusRule` (CrashLoop, CNPG no-primary /
   injoignable / lag / **backup en échec**, RabbitMQ down, latence p95, saturation pool PG),
   routage Slack par sévérité, seuils configurables (`alerting:*`), runbook + checklist
