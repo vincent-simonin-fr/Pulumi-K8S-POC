@@ -18,6 +18,7 @@ public class IngressResourcesArgs
     ///   wizzz.com          → gateway (API publique)
     ///   grafana.wizzz.com  → Grafana  (basic-auth)
     ///   jaeger.wizzz.com   → Jaeger   (basic-auth)
+    ///   vault.wizzz.com    → Vault    (TLS only, auth par token — si VaultEnabled)
     /// Configurable via ingress:domain dans Pulumi.*.yaml.
     /// </summary>
     public string Domain { get; set; } = "wizzz.com";
@@ -43,6 +44,15 @@ public class IngressResourcesArgs
 
     public string EcommerceNamespace { get; set; } = "ecommerce";
     public string MonitoringNamespace { get; set; } = "monitoring";
+
+    /// <summary>
+    /// Crée l'Ingress Vault (`vault.{domain}`) — requis en prod pour que le provider
+    /// pulumi-vault (configMode=provider) joigne Vault depuis l'hôte. Lié à vault:enabled.
+    /// </summary>
+    public bool VaultEnabled { get; set; } = false;
+
+    /// <summary>Namespace de Vault (où vit le Service `vault` ciblé par l'Ingress).</summary>
+    public string VaultNamespace { get; set; } = "vault";
 }
 
 public class IngressResources : ComponentResource
@@ -53,6 +63,7 @@ public class IngressResources : ComponentResource
         var domain        = args.Domain;
         var grafanaDomain = $"grafana.{domain}";
         var jaegerDomain  = $"jaeger.{domain}";
+        var vaultDomain   = $"vault.{domain}";
 
         var baseOpts = new CustomResourceOptions { Parent = this };
 
@@ -287,6 +298,59 @@ public class IngressResources : ComponentResource
                 }
             }
         }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { issuer, nginx, monitoringAuth } });
+
+        // ── Ingress : Vault (vault.wizzz.com) ─────────────────────────────────────
+        // Requis en prod pour que le provider pulumi-vault (configMode=provider) joigne
+        // Vault depuis l'hôte. PAS de basic-auth nginx : Vault s'authentifie par TOKEN
+        // (le provider envoie un token Vault — une couche basic-auth casserait l'API).
+        // TLS terminé par nginx ; backend en HTTP (listener Vault tls_disable=1 en interne).
+        // Créé seulement si Vault est déployé.
+        if (args.VaultEnabled)
+        {
+            _ = new Ingress("vault-ingress", new IngressArgs
+            {
+                Metadata = new ObjectMetaArgs
+                {
+                    Namespace   = args.VaultNamespace,
+                    Name        = "vault",
+                    Annotations = new InputMap<string>
+                    {
+                        ["cert-manager.io/cluster-issuer"]               = "letsencrypt-prod",
+                        ["nginx.ingress.kubernetes.io/ssl-redirect"]     = "true",
+                        ["nginx.ingress.kubernetes.io/backend-protocol"] = "HTTP"
+                    }
+                },
+                Spec = new IngressSpecArgs
+                {
+                    IngressClassName = "nginx",
+                    Tls = new IngressTLSArgs
+                    {
+                        Hosts      = new InputList<string> { vaultDomain },
+                        SecretName = "tls-vault"
+                    },
+                    Rules = new IngressRuleArgs
+                    {
+                        Host = vaultDomain,
+                        Http = new HTTPIngressRuleValueArgs
+                        {
+                            Paths = new HTTPIngressPathArgs
+                            {
+                                Path     = "/",
+                                PathType = "Prefix",
+                                Backend  = new IngressBackendArgs
+                                {
+                                    Service = new IngressServiceBackendArgs
+                                    {
+                                        Name = "vault",
+                                        Port = new ServiceBackendPortArgs { Number = 8200 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { issuer, nginx } });
+        }
 
         RegisterOutputs();
     }

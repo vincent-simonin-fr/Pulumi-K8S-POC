@@ -123,9 +123,11 @@ public class EcommerceStack : Stack
             }
             else
             {
-                // Option A — Job in-cluster (dev, défaut). Créé UNIQUEMENT si vault:rootToken
-                // est renseigné → bootstrap : up (serveur) → init/unseal → config set --secret
-                // vault:rootToken → up (ce Job configure Vault).
+                // Option A — Job in-cluster : FILET DE SECOURS, PAS le mode par défaut.
+                // ⚠️ Avec configMode=provider (défaut dev + prod), cette branche n'est JAMAIS
+                // exécutée → VaultConfigResources n'est pas instancié. Elle ne sert que si on
+                // bascule explicitement vault:configMode=job (Vault non joignable depuis l'hôte).
+                // Créé uniquement si vault:rootToken est renseigné.
                 if (rootTokenSet)
                 {
                     vaultConfigDone = new VaultConfigResources("vault-config", new VaultConfigResourcesArgs
@@ -539,7 +541,10 @@ public class EcommerceStack : Stack
                 AcmeEmail                    = ingressCfg.Get("acmeEmail")                    ?? "ops@wizzz.com",
                 MonitoringBasicAuthHtpasswd  = ingressCfg.Get("monitoringBasicAuthHtpasswd") ?? "",
                 CertManagerVersion           = ingressCfg.Get("certManagerVersion")           ?? "v1.16.2",
-                NginxVersion                 = ingressCfg.Get("nginxVersion")                 ?? "4.11.3"
+                NginxVersion                 = ingressCfg.Get("nginxVersion")                 ?? "4.11.3",
+                // Ingress Vault (vault.{domain}) : nécessaire au provider pulumi-vault en prod.
+                VaultEnabled                 = vaultCfg.GetBoolean("enabled") ?? false,
+                VaultNamespace               = VaultResources.VaultNamespace
             });
         }
 

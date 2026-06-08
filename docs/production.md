@@ -107,6 +107,12 @@ pulumi config set --secret observability:grafanaAdminPassword "<password>"
 # alerting:enabled=true est déjà posé dans Pulumi.prod.yaml ; fournir le webhook (SECRET) :
 pulumi config set --secret alerting:slackWebhook "https://hooks.slack.com/services/XXX/YYY/ZZZ"
 # (sans webhook, Alertmanager tourne mais n'envoie rien. Règles + runbook : docs/observability.md.)
+
+# ── Vault (config déclarative + DB engine) ───────────────────────────────────
+# Token d'admin pour le provider pulumi-vault + compte admin PostgreSQL du DB engine.
+# Détails et bootstrap : section « Vault » ci-dessous.
+pulumi config set --secret vault:rootToken      "<token-admin-vault>"
+pulumi config set --secret vault:dbAdminPassword "<password-admin-postgres>"
 ```
 
 > **Vérification** : après ces commandes, `Pulumi.prod.yaml` doit contenir des valeurs
@@ -135,7 +141,8 @@ que les pods soient Ready avant de continuer).
 2. cert-manager (Helm) + nginx-ingress (Helm) — en parallèle
 3. `ClusterIssuer` letsencrypt-prod — après cert-manager
 4. Infra applicative (PostgreSQL, RabbitMQ, APIs)
-5. Ingress resources (gateway, grafana, jaeger) — après ClusterIssuer + nginx
+5. Ingress resources (gateway, grafana, jaeger, vault*) — après ClusterIssuer + nginx
+   (*vault si `vault:enabled`)
 
 ---
 
@@ -146,12 +153,27 @@ auto-unseal KMS) génère un utilisateur éphémère par bail, VSO le livre dans
 K8s rotaté, et order-api / inventory-api sont redémarrés en rolling à la rotation.
 Détails et architecture : [docs/vault.md](vault.md).
 
+La config interne de Vault (auth k8s, DB engine, rôles, policies) est **déclarative** via le
+provider `pulumi-vault` (`vault:configMode=provider`, défaut). Le provider s'exécute sur
+l'**hôte Pulumi** → Vault doit être **joignable depuis l'hôte** : en prod, via **Ingress+TLS**
+(`vault:providerAddress=https://vault.{domain}`).
+
 ### Pré-requis
 - Une **clé KMS cloud** pour l'auto-unseal — stanza dans `Pulumi.prod.yaml` :
   ```yaml
   vault:sealConfig: 'seal "awskms" { region = "eu-west-1" kms_key_id = "arn:aws:kms:..." }'
   ```
 - Accès du pod Vault au KMS via **identité de charge** (IRSA / Workload Identity).
+- **Vault exposé via Ingress** (`vault.{domain}`) pour que le provider l'atteigne.
+  Créé automatiquement par `IngressResources` quand `vault:enabled` **et** `ingress:enabled`
+  (TLS cert-manager, secret `tls-vault`, auth par token Vault — pas de basic-auth). Pointer
+  `vault.{domain}` vers l'IP du LoadBalancer (cf. DNS). À défaut d'exposition, basculer
+  `vault:configMode=job` (Job in-cluster, n'a pas besoin que Vault soit joignable depuis l'hôte).
+- **Compte admin PostgreSQL** du DB engine (pas de `pg_hba` trust en prod) :
+  ```bash
+  pulumi config set vault:dbAdminUser <user>
+  pulumi config set --secret vault:dbAdminPassword <pw>
+  ```
 
 ### Bootstrap (une seule fois dans la vie du cluster Vault)
 
@@ -163,20 +185,22 @@ kubectl exec -n vault vault-0 -- vault status        # Sealed: false
 kubectl exec -n vault vault-0 -- vault operator init \
   -recovery-shares=5 -recovery-threshold=3 -format=json > vault-init-prod.json
 
-# 3. Fournir le token → active la config Vault, puis redéployer.
-pulumi config set --secret vault:rootToken "<root_token>"
-pulumi up --stack prod        # configure Vault (DB engine, rôles, auth k8s) + VSO
+# 3. Fournir un token d'admin Vault (AppRole court-vécu de préférence ; le root de
+#    bootstrap convient le temps de la config). Le provider pulumi-vault configure
+#    alors Vault DEPUIS L'HÔTE via vault:providerAddress (https://vault.{domain}).
+pulumi config set --secret vault:rootToken "<token>"
+pulumi up --stack prod        # provider → DB engine, rôles, auth k8s, policies + VSO
 
-# 4. Durcir : révoquer le root token de bootstrap une fois la config appliquée.
-kubectl exec -n vault vault-0 -- vault token revoke <root_token>
+# 4. Durcir : révoquer le token de bootstrap une fois la config appliquée.
+kubectl exec -n vault vault-0 -- vault token revoke <token>
 ```
 
 Une fois bootstrappé, order-api / inventory-api basculent **automatiquement** sur les
 creds dynamiques (Secrets `order-db-dynamic` / `inventory-db-dynamic`).
 
-> **Note** : la config Vault par **Job in-cluster** (Option A) est l'implémentation
-> actuelle. La cible prod est la config **déclarative** via le provider `pulumi-vault`
-> (Option B) — proposition OpenSpec `vault-config-pulumi-provider`.
+> **Mode de config** : `provider` (déclaratif `pulumi-vault`) est le **défaut** dev et prod.
+> `vault:configMode=job` reste un **filet de secours** (Job in-cluster, n'exige pas que Vault
+> soit joignable depuis l'hôte). Les deux produisent une config identique. Cf. [docs/vault.md](vault.md).
 
 ### Coexistence avec les mots de passe statiques
 Les `secrets:*DbPassword` (section précédente) restent nécessaires : ils initialisent
@@ -202,6 +226,7 @@ Créer les enregistrements DNS chez votre registrar :
 | A | `wizzz.com` | `<IP-PUBLIQUE>` |
 | A | `grafana.wizzz.com` | `<IP-PUBLIQUE>` |
 | A | `jaeger.wizzz.com` | `<IP-PUBLIQUE>` |
+| A | `vault.wizzz.com` | `<IP-PUBLIQUE>` (si Vault activé — Ingress créé automatiquement) |
 
 > **TTL recommandé** : 300s (5 min) pour le premier déploiement, augmenter à 3600s ensuite.
 
@@ -229,7 +254,7 @@ kubectl get pods -n cert-manager
 
 # 2. Certificats TLS (Let's Encrypt)
 kubectl get certificate -A
-# READY = True pour tls-gateway, tls-grafana, tls-jaeger
+# READY = True pour tls-gateway, tls-grafana, tls-jaeger (+ tls-vault si Vault activé)
 
 # 3. Ingress
 kubectl get ingress -A

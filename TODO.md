@@ -31,8 +31,9 @@ tasks) — implémentable via `/opsx:apply <nom>`.
 - **Config Vault déclarative (Option B) — généralisée dev + prod** — `VaultDeclarativeConfigResources.cs`
   (provider `pulumi-vault` 7.10) : auth k8s + DB engine + rôles dynamiques + policies déclaratifs.
   **`configMode=provider` par défaut partout** (dev = Vault en **NodePort 30820** joignable depuis
-  l'hôte ; prod = Ingress) ; `job` = filet de secours. Docs à jour (README, vault.md, access.md,
-  kubernetes.md). *(ex-P2 ; reste : validation live `pulumi up` mode provider + Ingress/AppRole prod.)*
+  l'hôte ; prod = **Ingress `vault.{domain}` + TLS** créé par `IngressResources`) ; `job` = filet
+  de secours. Docs à jour (README, vault.md, access.md, kubernetes.md, production.md).
+  *(ex-P2 ; reste : validation live `pulumi up` mode provider + AppRole court-vécu prod au lieu du root.)*
 - **Alerting** — Alertmanager (chart) + 9 `PrometheusRule` (CrashLoop, CNPG no-primary /
   injoignable / lag / **backup en échec**, RabbitMQ down, latence p95, saturation pool PG),
   routage Slack par sévérité, seuils configurables (`alerting:*`), runbook + checklist

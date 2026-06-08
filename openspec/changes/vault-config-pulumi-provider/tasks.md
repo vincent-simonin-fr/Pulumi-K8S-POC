@@ -2,7 +2,7 @@
 
 - [x] 1.1 Ajouter le package `Pulumi.Vault` au projet `infra/Ecommerce.Infra`
 - [x] 1.2 `vault:configMode` lue dans `EcommerceStack.cs` — **défaut `provider`** (dev ET prod) ; `job` = filet de secours
-- [x] 1.3 Exposer Vault : **dev = NodePort 30820** (`VaultResources` + `kind-config.yaml`, joignable depuis l'hôte sans port-forward) ; prod = `vault:providerAddress` Ingress (ressource Ingress dédiée Vault à finaliser côté prod)
+- [x] 1.3 Exposer Vault : **dev = NodePort 30820** (`VaultResources` + `kind-config.yaml`) ; **prod = Ingress `vault.{domain}` + TLS cert-manager** (`IngressResources`, créé si `vault:enabled` & `ingress:enabled`, auth par token — pas de basic-auth)
 
 ## 2. Authentification du provider vers Vault
 

@@ -23,7 +23,12 @@ public class VaultConfigResourcesArgs
 
 /// <summary>
 /// ════════════════════════════════════════════════════════════════════════════
-///  Configuration Vault — Option A (Job de bootstrap in-cluster).
+///  Configuration Vault — Option A (Job de bootstrap in-cluster) — FILET DE SECOURS.
+///
+///  ⚠️ Le mode PAR DÉFAUT (dev + prod) est la config déclarative via le provider
+///     pulumi-vault (VaultDeclarativeConfigResources, vault:configMode=provider). Ce Job
+///     n'est créé que si vault:configMode=job — utile quand Vault n'est pas joignable
+///     depuis l'hôte Pulumi (le Job tourne IN-CLUSTER, via le DNS interne).
 ///
 ///  Rejoue de façon idempotente, DANS le cluster, la config validée manuellement :
 ///    - database secrets engine -> order-db (CNPG), rôle dynamique order-app
@@ -42,7 +47,7 @@ public class VaultConfigResourcesArgs
 ///  Vault prêt (bootstrap : up → init/unseal → config set rootToken → up).
 ///
 ///  ⚠️ Le root token en Secret K8s + état Pulumi est l'anti-pattern accepté EN DEV.
-///     En prod : voir la proposition OpenSpec 'vault-config-pulumi-provider' (Option B).
+///     Équivalent déclaratif (mode par défaut) : VaultDeclarativeConfigResources.
 /// ════════════════════════════════════════════════════════════════════════════
 /// </summary>
 public class VaultConfigResources : ComponentResource
