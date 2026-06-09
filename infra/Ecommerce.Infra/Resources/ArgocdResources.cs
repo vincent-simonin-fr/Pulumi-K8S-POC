@@ -16,6 +16,12 @@ public class ArgocdResourcesArgs
     public bool IngressEnabled { get; set; } = false;
 
     /// <summary>
+    /// TLS local : utilise le ClusterIssuer self-signed (au lieu de Let's Encrypt) pour les
+    /// Ingress Argo CD. Aligné sur ingress:selfSigned. Cf. IngressResources / docs/ingress-local.md.
+    /// </summary>
+    public bool SelfSigned { get; set; } = false;
+
+    /// <summary>
     /// Hash bcrypt du mot de passe admin Argo CD.
     /// Si vide, Argo CD génère un secret aléatoire "argocd-initial-admin-secret".
     ///
@@ -267,7 +273,7 @@ public class ArgocdResources : ComponentResource
             ["annotations"] = new Dictionary<string, object>
             {
                 // cert-manager émet un certificat Let's Encrypt.
-                ["cert-manager.io/cluster-issuer"]                  = "letsencrypt-prod",
+                ["cert-manager.io/cluster-issuer"]                  = args.SelfSigned ? "selfsigned" : "letsencrypt-prod",
                 // Argo CD tourne en mode insecure → le backend est HTTP pur.
                 ["nginx.ingress.kubernetes.io/backend-protocol"]    = "HTTP",
                 ["nginx.ingress.kubernetes.io/force-ssl-redirect"]  = "true"
@@ -284,7 +290,7 @@ public class ArgocdResources : ComponentResource
             ["hostname"]         = $"argocd-grpc.{args.Domain}",
             ["annotations"] = new Dictionary<string, object>
             {
-                ["cert-manager.io/cluster-issuer"]                 = "letsencrypt-prod",
+                ["cert-manager.io/cluster-issuer"]                 = args.SelfSigned ? "selfsigned" : "letsencrypt-prod",
                 ["nginx.ingress.kubernetes.io/backend-protocol"]   = "GRPC",
                 ["nginx.ingress.kubernetes.io/ssl-redirect"]       = "true"
             },

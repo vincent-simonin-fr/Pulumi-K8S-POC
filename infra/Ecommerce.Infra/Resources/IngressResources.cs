@@ -1,4 +1,5 @@
 using Pulumi;
+using Pulumi.Command.Local;
 using Pulumi.Kubernetes.Core.V1;
 using Pulumi.Kubernetes.Helm.V3;
 using Pulumi.Kubernetes.Networking.V1;
@@ -6,8 +7,6 @@ using Pulumi.Kubernetes.Types.Inputs.Core.V1;
 using Pulumi.Kubernetes.Types.Inputs.Helm.V3;
 using Pulumi.Kubernetes.Types.Inputs.Meta.V1;
 using Pulumi.Kubernetes.Types.Inputs.Networking.V1;
-using Pulumi.Kubernetes.Types.Inputs.Yaml.V2;
-using Pulumi.Kubernetes.Yaml.V2;
 
 namespace Ecommerce.Infra.Resources;
 
@@ -53,6 +52,20 @@ public class IngressResourcesArgs
 
     /// <summary>Namespace de Vault (où vit le Service `vault` ciblé par l'Ingress).</summary>
     public string VaultNamespace { get; set; } = "vault";
+
+    /// <summary>
+    /// TLS LOCAL : ClusterIssuer **self-signed** (cert-manager) au lieu de Let's Encrypt.
+    /// Pour Kind, où ACME HTTP-01 est impossible (pas de DNS public). Le navigateur avertit,
+    /// mais la terminaison TLS par nginx fonctionne. Configurable via `ingress:selfSigned`.
+    /// </summary>
+    public bool SelfSigned { get; set; } = false;
+
+    /// <summary>
+    /// nginx en **hostPort 80/443** (au lieu de LoadBalancer) — pour Kind, où le Service
+    /// LoadBalancer reste &lt;pending&gt;. À combiner avec les extraPortMappings 80/443 de
+    /// kind-config (→ localhost). Force replicaCount=1. Configurable via `ingress:nginxHostPort`.
+    /// </summary>
+    public bool NginxHostPort { get; set; } = false;
 }
 
 public class IngressResources : ComponentResource
@@ -92,9 +105,33 @@ public class IngressResources : ComponentResource
         }, baseOpts);
 
         // ── nginx-ingress-controller ──────────────────────────────────────────────
-        // Service type LoadBalancer → IP publique provisionnée par le cloud provider.
-        // 2 réplicas pour la haute disponibilité.
-        // force-ssl-redirect : toute requête HTTP est redirigée vers HTTPS.
+        // Prod : Service LoadBalancer → IP publique (cloud), 2 réplicas (HA).
+        // Local/Kind (NginxHostPort) : le contrôleur bind 80/443 sur le nœud (+ kind
+        // extraPortMappings) → localhost. force-ssl-redirect : HTTP → HTTPS.
+        var nginxController = new Dictionary<string, object>
+        {
+            // hostPort : un seul pod peut binder 80/443 sur un nœud → replicaCount=1.
+            ["replicaCount"] = args.NginxHostPort ? 1 : 2,
+            ["resources"] = new Dictionary<string, object>
+            {
+                ["requests"] = new Dictionary<string, object> { ["cpu"] = "100m", ["memory"] = "90Mi"  },
+                ["limits"]   = new Dictionary<string, object> { ["cpu"] = "500m", ["memory"] = "256Mi" }
+            },
+            ["config"] = new Dictionary<string, object>
+            {
+                ["ssl-redirect"]          = "true",
+                ["force-ssl-redirect"]    = "true",
+                ["use-forwarded-headers"] = "true",
+                ["proxy-body-size"]       = "8m"
+            }
+        };
+        if (args.NginxHostPort)
+        {
+            // Kind : pas de LoadBalancer → exposition via hostPort + Service ClusterIP.
+            nginxController["hostPort"] = new Dictionary<string, object> { ["enabled"] = true };
+            nginxController["service"]  = new Dictionary<string, object> { ["type"] = "ClusterIP" };
+        }
+
         var nginx = new Release("nginx-ingress", new ReleaseArgs
         {
             Chart           = "ingress-nginx",
@@ -103,60 +140,81 @@ public class IngressResources : ComponentResource
             CreateNamespace = true,
             RepositoryOpts  = new RepositoryOptsArgs { Repo = "https://kubernetes.github.io/ingress-nginx" },
             WaitForJobs     = true,
-            Values          = new InputMap<object>
+            Values          = new InputMap<object> { ["controller"] = nginxController }
+        }, baseOpts);
+
+        // ── ClusterIssuer ─────────────────────────────────────────────────────────
+        // Prod : Let's Encrypt (ACME HTTP-01 — domaine PUBLIC + port 80 requis).
+        // Local/Kind (SelfSigned) : émetteur auto-signé — ACME impossible sans DNS public.
+        //   → TLS terminé par nginx avec un cert auto-signé (le navigateur avertit, normal).
+        var issuerName = args.SelfSigned ? "selfsigned" : "letsencrypt-prod";
+        var issuerSpec = args.SelfSigned
+            ? "  selfSigned: {}"
+            : $@"  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: {args.AcmeEmail}
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+    - http01:
+        ingress:
+          class: nginx";
+
+        // Appliqué via kubectl (Pulumi.Command), PAS via ConfigGroup : la CRD ClusterIssuer
+        // (cert-manager.io/v1) est installée par le chart cert-manager pendant CE même
+        // pulumi up → absente du cache GVK du provider Kubernetes (même contrainte que
+        // CNPG/KEDA/ServiceMonitors). kubectl, lui, résout la CRD à l'exécution.
+        var issuerYaml = $@"apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {issuerName}
+spec:
+{issuerSpec}";
+
+        var issuer = new Command("cluster-issuer", new CommandArgs
+        {
+            Create = "kubectl apply --server-side -f -",
+            Update = "kubectl apply --server-side -f -",
+            Delete = "kubectl delete --ignore-not-found -f -",
+            Stdin  = issuerYaml
+        }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { certManager } });
+
+        // ── Secret basic-auth monitoring (OPTIONNEL) ──────────────────────────────
+        // Protège Grafana/Jaeger au niveau nginx. Créé SEULEMENT si un htpasswd est fourni
+        // (ingress:monitoringBasicAuthHtpasswd). Vide (dev local) → pas de basic-auth →
+        // Grafana/Jaeger accessibles directement (sinon nginx exigerait un mot de passe
+        // inexistant → 401). En prod : poser le htpasswd → la protection s'active.
+        var basicAuthEnabled = !string.IsNullOrEmpty(args.MonitoringBasicAuthHtpasswd);
+        Secret? monitoringAuth = null;
+        if (basicAuthEnabled)
+            monitoringAuth = new Secret("monitoring-basic-auth", new SecretArgs
             {
-                ["controller"] = new Dictionary<string, object>
-                {
-                    ["replicaCount"] = 2,
-                    ["resources"] = new Dictionary<string, object>
-                    {
-                        ["requests"] = new Dictionary<string, object> { ["cpu"] = "100m", ["memory"] = "90Mi"  },
-                        ["limits"]   = new Dictionary<string, object> { ["cpu"] = "500m", ["memory"] = "256Mi" }
-                    },
-                    ["config"] = new Dictionary<string, object>
-                    {
-                        ["ssl-redirect"]          = "true",
-                        ["force-ssl-redirect"]    = "true",
-                        ["use-forwarded-headers"] = "true",
-                        ["proxy-body-size"]       = "8m"
-                    }
-                }
+                Metadata   = new ObjectMetaArgs { Namespace = args.MonitoringNamespace, Name = "monitoring-basic-auth" },
+                Type       = "Opaque",
+                StringData = new InputMap<string> { ["auth"] = args.MonitoringBasicAuthHtpasswd }
+            }, baseOpts);
+
+        // Annotations communes Grafana/Jaeger — basic-auth ajoutée uniquement si activée.
+        InputMap<string> MonitoringAnnotations()
+        {
+            var a = new Dictionary<string, string>
+            {
+                ["cert-manager.io/cluster-issuer"]           = issuerName,
+                ["nginx.ingress.kubernetes.io/ssl-redirect"] = "true"
+            };
+            if (basicAuthEnabled)
+            {
+                a["nginx.ingress.kubernetes.io/auth-type"]   = "basic";
+                a["nginx.ingress.kubernetes.io/auth-secret"] = "monitoring-basic-auth";
+                a["nginx.ingress.kubernetes.io/auth-realm"]  = "Monitoring";
             }
-        }, baseOpts);
+            return a;
+        }
 
-        // ── ClusterIssuer Let's Encrypt ───────────────────────────────────────────
-        // HTTP-01 challenge : nginx-ingress expose temporairement
-        //   /.well-known/acme-challenge/<token>
-        // Let's Encrypt appelle ce endpoint depuis Internet pour valider la propriété du domaine.
-        // ⚠️  Le domaine doit être résolvable publiquement et pointer vers l'IP du LoadBalancer.
-        var issuer = new ConfigGroup("letsencrypt-issuer", new ConfigGroupArgs
-        {
-            // V2 : Yaml est un Input<string> (document unique, pas une liste)
-            Yaml = $@"apiVersion: cert-manager.io/v1
-                        kind: ClusterIssuer
-                        metadata:
-                          name: letsencrypt-prod
-                        spec:
-                          acme:
-                            server: https://acme-v02.api.letsencrypt.org/directory
-                            email: {args.AcmeEmail}
-                            privateKeySecretRef:
-                              name: letsencrypt-prod-key
-                            solvers:
-                            - http01:
-                                ingress:
-                                  class: nginx"
-        }, new ComponentResourceOptions { Parent = this, DependsOn = new Resource[] { certManager } });
-
-        // ── Secret basic-auth monitoring ──────────────────────────────────────────
-        // Protège Grafana et Jaeger au niveau nginx (couche externe).
-        // Le Secret doit être dans le même namespace que les Ingress qui l'utilisent.
-        var monitoringAuth = new Secret("monitoring-basic-auth", new SecretArgs
-        {
-            Metadata   = new ObjectMetaArgs { Namespace = args.MonitoringNamespace, Name = "monitoring-basic-auth" },
-            Type       = "Opaque",
-            StringData = new InputMap<string> { ["auth"] = args.MonitoringBasicAuthHtpasswd }
-        }, baseOpts);
+        // DependsOn des Ingress monitoring (inclut le secret basic-auth s'il existe).
+        var monitoringDeps = monitoringAuth != null
+            ? new Resource[] { issuer, nginx, monitoringAuth }
+            : new Resource[] { issuer, nginx };
 
         // ── Ingress : gateway (API publique — wizzz.com) ──────────────────────────
         // Pas de basic-auth : l'API est publique (authentification gérée par l'application).
@@ -168,7 +226,7 @@ public class IngressResources : ComponentResource
                 Name        = "gateway",
                 Annotations = new InputMap<string>
                 {
-                    ["cert-manager.io/cluster-issuer"]           = "letsencrypt-prod",
+                    ["cert-manager.io/cluster-issuer"]           = issuerName,
                     ["nginx.ingress.kubernetes.io/ssl-redirect"] = "true",
                     ["nginx.ingress.kubernetes.io/use-regex"]    = "true"
                 }
@@ -212,14 +270,7 @@ public class IngressResources : ComponentResource
             {
                 Namespace   = args.MonitoringNamespace,
                 Name        = "grafana",
-                Annotations = new InputMap<string>
-                {
-                    ["cert-manager.io/cluster-issuer"]              = "letsencrypt-prod",
-                    ["nginx.ingress.kubernetes.io/ssl-redirect"]    = "true",
-                    ["nginx.ingress.kubernetes.io/auth-type"]       = "basic",
-                    ["nginx.ingress.kubernetes.io/auth-secret"]     = "monitoring-basic-auth",
-                    ["nginx.ingress.kubernetes.io/auth-realm"]      = "Monitoring"
-                }
+                Annotations = MonitoringAnnotations()
             },
             Spec = new IngressSpecArgs
             {
@@ -242,15 +293,16 @@ public class IngressResources : ComponentResource
                             {
                                 Service = new IngressServiceBackendArgs
                                 {
-                                    Name = "grafana",
-                                    Port = new ServiceBackendPortArgs { Number = 3000 }
+                                    // Service réel du chart kube-prometheus-stack (≠ "grafana"), port 80.
+                                    Name = "kube-prometheus-stack-grafana",
+                                    Port = new ServiceBackendPortArgs { Number = 80 }
                                 }
                             }
                         }
                     }
                 }
             }
-        }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { issuer, nginx, monitoringAuth } });
+        }, new CustomResourceOptions { Parent = this, DependsOn = monitoringDeps });
 
         // ── Ingress : Jaeger (tracing — jaeger.wizzz.com) ────────────────────────
         _ = new Ingress("jaeger-ingress", new IngressArgs
@@ -259,14 +311,7 @@ public class IngressResources : ComponentResource
             {
                 Namespace   = args.MonitoringNamespace,
                 Name        = "jaeger",
-                Annotations = new InputMap<string>
-                {
-                    ["cert-manager.io/cluster-issuer"]              = "letsencrypt-prod",
-                    ["nginx.ingress.kubernetes.io/ssl-redirect"]    = "true",
-                    ["nginx.ingress.kubernetes.io/auth-type"]       = "basic",
-                    ["nginx.ingress.kubernetes.io/auth-secret"]     = "monitoring-basic-auth",
-                    ["nginx.ingress.kubernetes.io/auth-realm"]      = "Monitoring"
-                }
+                Annotations = MonitoringAnnotations()
             },
             Spec = new IngressSpecArgs
             {
@@ -297,7 +342,7 @@ public class IngressResources : ComponentResource
                     }
                 }
             }
-        }, new CustomResourceOptions { Parent = this, DependsOn = new Resource[] { issuer, nginx, monitoringAuth } });
+        }, new CustomResourceOptions { Parent = this, DependsOn = monitoringDeps });
 
         // ── Ingress : Vault (vault.wizzz.com) ─────────────────────────────────────
         // Requis en prod pour que le provider pulumi-vault (configMode=provider) joigne
@@ -315,7 +360,7 @@ public class IngressResources : ComponentResource
                     Name        = "vault",
                     Annotations = new InputMap<string>
                     {
-                        ["cert-manager.io/cluster-issuer"]               = "letsencrypt-prod",
+                        ["cert-manager.io/cluster-issuer"]               = issuerName,
                         ["nginx.ingress.kubernetes.io/ssl-redirect"]     = "true",
                         ["nginx.ingress.kubernetes.io/backend-protocol"] = "HTTP"
                     }

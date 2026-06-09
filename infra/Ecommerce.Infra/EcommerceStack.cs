@@ -517,6 +517,7 @@ public class EcommerceStack : Stack
             Version                = argocdCfg.Get("version")                 ?? "7.8.3",
             Domain                 = domain,
             IngressEnabled         = ingressEnabled,
+            SelfSigned             = ingressCfg.GetBoolean("selfSigned")          ?? false,
             AdminPasswordBcrypt    = argocdCfg.Get("adminPasswordHash")        ?? "",
             ServerReplicas         = argocdCfg.GetInt32("serverReplicas")         ?? 1,
             RepoServerReplicas     = argocdCfg.GetInt32("repoServerReplicas")     ?? 1,
@@ -552,7 +553,10 @@ public class EcommerceStack : Stack
                 NginxVersion                 = ingressCfg.Get("nginxVersion")                 ?? "4.11.3",
                 // Ingress Vault (vault.{domain}) : nécessaire au provider pulumi-vault en prod.
                 VaultEnabled                 = vaultCfg.GetBoolean("enabled") ?? false,
-                VaultNamespace               = VaultResources.VaultNamespace
+                VaultNamespace               = VaultResources.VaultNamespace,
+                // Mode LOCAL (Kind) : self-signed + nginx hostPort (cf. docs/ingress-local.md).
+                SelfSigned                   = ingressCfg.GetBoolean("selfSigned")    ?? false,
+                NginxHostPort                = ingressCfg.GetBoolean("nginxHostPort") ?? false
             });
         }
 

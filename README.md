@@ -24,6 +24,7 @@ Stack microservices e-commerce de démonstration en **Clean Architecture**, comm
 | [Test HA multi-nœuds](docs/ha-testing.md)               | Kind multi-nœuds, anti-affinité, failover CNPG/RabbitMQ, drain de nœud                         |
 | [Vault — secrets dynamiques](docs/vault.md)             | HashiCorp Vault + VSO, creds PostgreSQL dynamiques, bootstrap init/unseal, re-init             |
 | [Sauvegardes & MinIO](docs/backups.md)                  | Backups CNPG (Barman) + WAL, MinIO (S3) + console, ScheduledBackup, PITR                       |
+| [Ingress en local](docs/ingress-local.md)              | Monter nginx Ingress + TLS self-signed sur Kind (hostPort 80/443, `/etc/hosts`)               |
 
 ---
 
